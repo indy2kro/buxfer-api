@@ -1,0 +1,24 @@
+{
+    "name": "indy2kro/BuxferApi",
+    "type": "library",
+    "description": "Buxfer API client library",
+    "keywords": [
+        "buxfer"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Cristi RADU",
+            "email": "indy2kro@gmail.com",
+            "homepage": "https://github.com/mtdowling"
+        }
+    ],
+    "require": {
+        "php": ">=5.6.0",
+        "ext-curl": "*"
+    },
+    "autoload": {
+    },
+    "autoload-dev": {
+    }
+}
