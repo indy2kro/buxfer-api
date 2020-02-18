@@ -1,2 +1,2 @@
 # BuxferApi
-Buxfer API library
+Buxfer API library in PHP.
