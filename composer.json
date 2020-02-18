@@ -1,5 +1,5 @@
 {
-    "name": "indy2kro/BuxferApi",
+    "name": "indy2kro/buxfer-api",
     "type": "library",
     "description": "Buxfer API client library",
     "keywords": [
