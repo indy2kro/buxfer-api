@@ -19,7 +19,7 @@
     },
     "autoload": {
         "psr-4": {
-            "BuxferApi\\": "src/"
+            "BuxferApi\\": "src/BuxferApi/"
         }
     },
     "autoload-dev": {
