@@ -57,6 +57,7 @@ $transactions = $buxferApi->listTransactions($config['buxfer_accountId']);
 
 // add new transaction
 $newTransaction = array(
+    'accountId' => $config['buxfer_accountId'],
     'date'  => '2020-02-11 10:20:00',
     'type'  => 'expense',
     'amount' => '10.20',
