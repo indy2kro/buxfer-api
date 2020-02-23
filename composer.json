@@ -18,6 +18,9 @@
         "ext-curl": "*"
     },
     "autoload": {
+        "psr-4": {
+            "BuxferApi\\": "src/"
+        }
     },
     "autoload-dev": {
     }
