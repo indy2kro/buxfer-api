@@ -2,6 +2,8 @@
 
 namespace BuxferApi;
 
+use BuxferApi\HttpClient;
+
 class Client
 {
     /*
@@ -26,14 +28,15 @@ class Client
      */
     protected $_config = array(
         'user_agent' => 'PHP BuxferApi ' . self::VERSION,
-        'timeout' => 10
+        'timeout' => 10,
+        'handler' => null,
     );
     
     /**
      * Curl resource
-     * @var resource 
+     * @var HttpClient 
      */
-    protected $_curl;
+    protected $_httpClient;
     
     /**
      * Token used for requests
@@ -51,11 +54,34 @@ class Client
      * Constructor
      * 
      * @param array $config
+     * @param HttpClient $httpClient
      */
-    public function __construct(Array $config = array())
+    public function __construct(Array $config = array(), HttpClient $httpClient = null)
+    {
+        $this->setConfig($config);
+        
+        // initialize http client
+        $this->_httpClient = !is_null($httpClient) ? $httpClient : new HttpClient($this->_config);
+    }
+    
+    /**
+     * Set configuration
+     * 
+     * @param array $config
+     */
+    public function setConfig(Array $config = array())
     {
         $this->_config = array_merge($this->_config, $config);
-        $this->_curl = curl_init();
+    }
+    
+    /**
+     * Get configuration
+     * 
+     * @return array
+     */
+    public function getConfig()
+    {
+        return $this->_config;
     }
     
     /**
@@ -222,6 +248,16 @@ class Client
     }
     
     /**
+     * Get token after login
+     * 
+     * @return string
+     */
+    public function getToken()
+    {
+        return $this->_token;
+    }
+    
+    /**
      * Run REST request
      * @param string $url
      * @param string $method
@@ -251,43 +287,31 @@ class Client
      * @param string $url
      * @param string $method
      * @param array $postParams
-     * @param array $curlExtraOptions
+     * @param array $extraOptions
      * @return string
      * @throws Exception
      */
-    protected function _httpRequest($url, $method = self::METHOD_GET, Array $postParams = array(), Array $curlExtraOptions = array())
+    protected function _httpRequest($url, $method = self::METHOD_GET, Array $postParams = array(), Array $extraOptions = array())
     {
         $startTime = microtime(true);
         
-        curl_setopt($this->_curl, CURLOPT_URL, $url);
-        curl_setopt($this->_curl, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($this->_curl, CURLOPT_USERAGENT, $this->_config['user_agent']);
-        curl_setopt($this->_curl, CURLOPT_TIMEOUT, $this->_config['timeout']);
-        
-        $methodPost = ($method == self::METHOD_POST) ? 1 : 0;
-        
-        curl_setopt($this->_curl, CURLOPT_POST, $methodPost);
-        
-        // set POST parameters
-        if ($methodPost) {
-            curl_setopt($this->_curl, CURLOPT_POSTFIELDS, $postParams);
+        if (!isset($extraOptions['headers'])) {
+            $extraOptions['headers'] = array();
         }
         
-        // set extra options
-        foreach ($curlExtraOptions as $optionName => $optionValue) {
-            curl_setopt($this->_curl, $optionName, $optionValue);
+        $extraOptions['headers']['User-Agent'] = $this->_config['user_agent'];
+        
+        if ($method == self::METHOD_POST) {
+            $extraOptions['form_params'] = $postParams;
         }
         
-        $response = curl_exec($this->_curl);
-        
-        if (false === $response) {
-            throw new Exception('Buxfer CURL request failed');
-        }
+        $response = $this->_httpClient->request($method, $url, $extraOptions);
+        $responseBody = $response->getBody();
         
         $endTime = microtime(true);
         
         $this->_lastDuration = round($endTime - $startTime, 4);
         
-        return $response;
+        return $responseBody;
     }
 }
