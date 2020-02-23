@@ -46,7 +46,7 @@ protected $_config = array(
 
 $config = array(
     'buxfer_username' => 'testuser@testaccount.com',
-    'buxfer_password' => 'testpasswordhash',
+    'buxfer_password' => 'testpassword',
     'buxfer_accountId' => '1000000',
 );
 $buxferApi = new \BuxferApi\Client($buxferConfig);
