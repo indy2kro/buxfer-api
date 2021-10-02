@@ -1,0 +1,7 @@
+path:
+  - src
+jobs: 1
+extensions:
+  - php
+exclude:
+  - vendor
