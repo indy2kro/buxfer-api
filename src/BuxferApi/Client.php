@@ -1,8 +1,17 @@
 <?php
-
+/**
+ * Buxfer API client
+ *
+ * @package BuxferApi
+ * @author Indiana Jones <indy2kro@gmail.com>
+ * @copyright 2021 BuxferApi
+ * @license MIT https://opensource.org/licenses/MIT
+ */
+ 
 namespace BuxferApi;
 
-use BuxferApi\HttpClient;
+use BuxferApi\Exception;
+use GuzzleHttp\Client as HttpClient;
 
 class Client
 {
@@ -24,6 +33,7 @@ class Client
     
     /**
      * Configuration
+     * 
      * @var array
      */
     protected $_config = array(
@@ -33,19 +43,22 @@ class Client
     );
     
     /**
-     * Curl resource
+     * Http client
+     * 
      * @var HttpClient 
      */
     protected $_httpClient;
     
     /**
      * Token used for requests
+     * 
      * @var string
      */
     protected $_token;
     
     /**
      * Last duration
+     * 
      * @var float
      */
     protected $_lastDuration = 0;
@@ -53,8 +66,8 @@ class Client
     /**
      * Constructor
      * 
-     * @param array $config
-     * @param HttpClient $httpClient
+     * @param array      $config     Configuration array
+     * @param HttpClient $httpClient Http client
      */
     public function __construct(Array $config = array(), HttpClient $httpClient = null)
     {
@@ -67,7 +80,8 @@ class Client
     /**
      * Set configuration
      * 
-     * @param array $config
+     * @param array $config Configuration array
+     * @return void
      */
     public function setConfig(Array $config = array())
     {
@@ -87,8 +101,10 @@ class Client
     /**
      * Buxfer API login
      * 
-     * @param string $username
-     * @param string $password
+     * @param string $username Buxfer username
+     * @param string $password Buxfer password
+     * @throws Exception
+     * @return void
      */
     public function login($username, $password)
     {
@@ -197,7 +213,8 @@ class Client
     /**
      * Upload statement
      * 
-     * @param array $params
+     * @param array $params Parameters for upload statement
+     * @return void
      */
     public function uploadStatement(Array $params = array())
     {
@@ -209,7 +226,7 @@ class Client
     /**
      * List transactions
      * 
-     * @param array $filters
+     * @param array $filters Filters used for transaction listing
      * @return array
      */
     public function listTransactions(Array $filters = array())
@@ -228,7 +245,8 @@ class Client
     /**
      * Add transaction
      * 
-     * @param array $transaction
+     * @param array $transaction Transaction data
+     * @return void
      */
     public function addTransaction(Array $transaction)
     {
@@ -259,11 +277,12 @@ class Client
     
     /**
      * Run REST request
-     * @param string $url
-     * @param string $method
-     * @param array $postParams
-     * @return array
+     * 
+     * @param string $url        URL to send request
+     * @param string $method     Method used to send request
+     * @param array  $postParams Parameters used for POST
      * @throws Exception
+     * @return array
      */
     protected function _restRequest($url, $method = self::METHOD_GET, Array $postParams = array())
     {
@@ -284,12 +303,12 @@ class Client
     /**
      * Run HTTP request
      * 
-     * @param string $url
-     * @param string $method
-     * @param array $postParams
-     * @param array $extraOptions
-     * @return string
+     * @param string $url          URL to send request
+     * @param string $method       Method used to send request
+     * @param array  $postParams   Parameters used for POST
+     * @param array  $extraOptions Extra options
      * @throws Exception
+     * @return string
      */
     protected function _httpRequest($url, $method = self::METHOD_GET, Array $postParams = array(), Array $extraOptions = array())
     {
@@ -306,7 +325,7 @@ class Client
         }
         
         $response = $this->_httpClient->request($method, $url, $extraOptions);
-        $responseBody = $response->getBody();
+        $responseBody = (string)$response->getBody();
         
         $endTime = microtime(true);
         
@@ -315,3 +334,5 @@ class Client
         return $responseBody;
     }
 }
+
+/* EOF */
