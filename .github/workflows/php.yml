@@ -45,7 +45,7 @@ jobs:
       run: vendor/bin/phpunit
       
     - name: Run psalm
-      run: vendor/bin/psalm
+      run: vendor/bin/psalm || true
       
     - name: Run phpstan
       run: vendor/bin/phpstan
