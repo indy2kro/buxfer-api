@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.1.0 - 2026-10-14
+
 ### Security
 - Redirects are no longer followed, so a redirect cannot send the token to another scheme or host; a 3xx answer is reported as a `BuxferApi\Exception`.
 - The `login()` password is marked `#[\SensitiveParameter]` and is redacted from stack traces, and `var_dump()` and `print_r()` of the client no longer show the token.
@@ -38,5 +40,6 @@
 
 See the git history.
 
-[Unreleased]: https://github.com/indy2kro/buxfer-api/compare/2.0.0...HEAD
+[Unreleased]: https://github.com/indy2kro/buxfer-api/compare/2.1.0...HEAD
+[2.1.0]: https://github.com/indy2kro/buxfer-api/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/indy2kro/buxfer-api/compare/1.1.1...2.0.0

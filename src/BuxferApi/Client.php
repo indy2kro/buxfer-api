@@ -24,7 +24,7 @@ class Client
     /**
      * Update this when tagging a release; it is part of the default User-Agent.
      */
-    public const string VERSION = '2.0.0';
+    public const string VERSION = '2.1.0';
 
     public const string METHOD_GET = 'GET';
     public const string METHOD_POST = 'POST';
