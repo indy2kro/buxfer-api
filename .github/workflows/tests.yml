@@ -2,12 +2,12 @@ name: Tests
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1"
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 permissions:
   contents: read
