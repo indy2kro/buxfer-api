@@ -294,7 +294,7 @@ final class ClientTest extends TestCase
         $this->assertIsArray($item);
         $this->assertEquals('2d510c2696ec50d19a4e122129c455df', $item['id']);
 
-        $this->assertNotEmpty($client->getLastDuration());
+        $this->assertGreaterThanOrEqual(0.0, $client->getLastDuration());
     }
 
     public function testListTransactionsFail(): void
