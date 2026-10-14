@@ -4,334 +4,392 @@ declare(strict_types=1);
 
 namespace BuxferApi\Test;
 
-use PHPUnit\Framework\TestCase;
-use GuzzleHttp\Handler\MockHandler;
-use GuzzleHttp\Psr7\Response;
-use GuzzleHttp\HandlerStack;
 use BuxferApi\Client;
 use BuxferApi\Exception as BuxferApiException;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Response;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\RequestInterface;
 
 final class ClientTest extends TestCase
 {
+    private const string TOKEN = 'testtoken';
+
+    private const string ERROR = '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}';
+
+    /**
+     * @var list<RequestInterface>
+     */
+    private array $requests = [];
+
+    /**
+     * @param list<Response|\Throwable> $responses
+     */
+    private function client(array $responses): Client
+    {
+        $this->requests = [];
+        $stack = HandlerStack::create(new MockHandler($responses));
+        $stack->push(Middleware::tap(function (RequestInterface $request): void {
+            $this->requests[] = $request;
+        }));
+
+        return new Client(['handler' => $stack]);
+    }
+
+    /**
+     * @param list<Response|\Throwable> $responses Responses after the login
+     */
+    private function loggedInClient(array $responses): Client
+    {
+        $client = $this->client([$this->json('{"response":{"status":"OK","token":"' . self::TOKEN . '"}}'), ...$responses]);
+        $client->login('testlogin', 'testpass');
+
+        return $client;
+    }
+
+    private function json(string $body, int $status = 200): Response
+    {
+        return new Response($status, [], $body);
+    }
+
+    private function lastRequest(): RequestInterface
+    {
+        return $this->requestAt(count($this->requests) - 1);
+    }
+
+    private function requestAt(int $index): RequestInterface
+    {
+        return $this->requests[$index];
+    }
+
     public function testSetConfig(): void
     {
         $client = new Client();
 
-        $initialConfig = $client->getConfig();
-        $this->assertNotEquals(20, $initialConfig['timeout']);
+        $this->assertSame(10, $client->getConfig()['timeout']);
 
-        $config = ['timeout' => 20];
+        $client->setConfig(['timeout' => 20]);
 
-        $client->setConfig($config);
-        $readConfig = $client->getConfig();
+        $this->assertSame(20, $client->getConfig()['timeout']);
+    }
 
-        $this->assertEquals($config['timeout'], $readConfig['timeout']);
+    public function testSetConfigRebuildsHttpClient(): void
+    {
+        $client = new Client();
+        $stack = HandlerStack::create(new MockHandler([$this->json('{"response":{"token":"abc"}}')]));
+
+        $client->setConfig(['handler' => $stack]);
+
+        $this->assertSame('abc', $client->login('testlogin', 'testpass'));
+    }
+
+    public function testSetConfigRejectsUnknownKey(): void
+    {
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('Unknown configuration "verify"');
+
+        new Client(['verify' => false]);
+    }
+
+    public function testSetConfigRejectsWrongType(): void
+    {
+        $client = new Client();
+
+        $this->expectException(BuxferApiException::class);
+        $client->setConfig(['timeout' => 'soon']);
     }
 
     public function testLoginSuccess(): void
     {
-        $token = 'testtoken';
+        $client = $this->loggedInClient([]);
 
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","token":"' . $token . '"}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $this->assertSame(self::TOKEN, $client->getToken());
 
-        $client = new Client(['handler' => $handlerStack]);
-        $client->login('testlogin', 'testpass');
-
-        $this->assertSame($token, $client->getToken());
+        $request = $this->lastRequest();
+        $this->assertSame('POST', $request->getMethod());
+        $this->assertSame('/api/login', $request->getUri()->getPath());
+        $this->assertSame('', $request->getUri()->getQuery(), 'credentials must not be sent in the URL');
+        $this->assertSame('email=testlogin&password=testpass', (string) $request->getBody());
+        $this->assertStringStartsWith('PHP BuxferApi', $request->getHeaderLine('User-Agent'));
     }
 
     public function testLoginFail(): void
     {
-        $token = 'testtoken';
+        $client = $this->client([$this->json(self::ERROR)]);
 
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
         $this->expectException(BuxferApiException::class);
-        $client->login('badlogin', 'badpass');
-
-        $this->assertNotSame($token, $client->getToken());
+        $this->expectExceptionMessage('Email or username does not match an existing account.');
+        $client->login('testlogin', 'testpass');
     }
 
-    public function testListAccountsSuccess(): void
+    public function testLoginWithoutTokenFails(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","accounts":[{"id":"e7b9d4d7c6974ad1e9ee320ad302874d","name":"Wallet","bank":"Your Wallet","balance":-9543.16},{"id":"96586dff416564f56baed7711ac3e61a","name":"PersonalChk","bank":"Bank of America - Banking","balance":8391.28,"lastSynced":"2008-02-13 11:37:54"},{"id":"7b48a3c070d96d768e0de3ee3ed0b0b0","name":"Amex","bank":"American Express - Credit Cards","balance":0,"lastSynced":"2007-11-22 10:51:52"},{"id":"57bd3b47d5ef2665ee1c96d88419f737","name":"CitiMastercard","bank":"Citibank - Credit Cards","balance":-473.15,"lastSynced":"2008-02-18 12:03:06"}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->client([$this->json('{"response":{"status":"OK"}}')]);
 
-        $client = new Client(['handler' => $handlerStack]);
-        $accounts = $client->listAccounts();
-
-        $this->assertCount(4, $accounts);
-        $item = $accounts[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('e7b9d4d7c6974ad1e9ee320ad302874d', $item['id']);
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('Token not received');
+        $client->login('testlogin', 'testpass');
     }
 
-    public function testListAccountsFail(): void
+    public function testLoginRequiresCredentials(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->client([]);
 
-        $client = new Client(['handler' => $handlerStack]);
+        try {
+            $client->login('', 'testpass');
+            $this->fail('Empty username accepted');
+        } catch (BuxferApiException $exception) {
+            $this->assertStringContainsString('username', $exception->getMessage());
+        }
+
+        $this->expectExceptionMessage('password');
+        $client->login('testlogin', '');
+    }
+
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function listProvider(): array
+    {
+        return [
+            'accounts' => ['listAccounts', 'accounts'],
+            'loans' => ['listLoans', 'loans'],
+            'tags' => ['listTags', 'tags'],
+            'budgets' => ['listBudgets', 'budgets'],
+            'reminders' => ['listReminders', 'reminders'],
+            'groups' => ['listGroups', 'groups'],
+            'contacts' => ['listContacts', 'contacts'],
+        ];
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function methodProvider(): array
+    {
+        return array_map(static fn (array $case): array => [$case[0]], self::listProvider());
+    }
+
+    #[DataProvider('listProvider')]
+    public function testListSuccess(string $method, string $endpoint): void
+    {
+        $client = $this->loggedInClient([$this->json('{"response":{"status":"OK","' . $endpoint . '":[{"id":"a1"},{"id":"b2"}]}}')]);
+
+        $items = $client->$method();
+
+        $this->assertIsArray($items);
+        $this->assertCount(2, $items);
+        $this->assertSame(['id' => 'a1'], $items[0]);
+
+        $request = $this->lastRequest();
+        $this->assertSame('GET', $request->getMethod());
+        $this->assertSame('/api/' . $endpoint, $request->getUri()->getPath());
+        $this->assertSame('token=' . self::TOKEN, $request->getUri()->getQuery());
+    }
+
+    #[DataProvider('methodProvider')]
+    public function testListFail(string $method): void
+    {
+        $client = $this->loggedInClient([$this->json(self::ERROR)]);
+
         $this->expectException(BuxferApiException::class);
+        $client->$method();
+    }
+
+    #[DataProvider('methodProvider')]
+    public function testListRequiresLogin(string $method): void
+    {
+        $client = $this->client([]);
+
+        try {
+            $client->$method();
+            $this->fail('Request sent without a token');
+        } catch (BuxferApiException $exception) {
+            $this->assertStringContainsString('login()', $exception->getMessage());
+        }
+
+        $this->assertCount(0, $this->requests);
+    }
+
+    public function testMissingListKeyFails(): void
+    {
+        $client = $this->loggedInClient([$this->json('{"response":{"status":"OK"}}')]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('Missing "accounts"');
         $client->listAccounts();
     }
 
-    public function testListLoansSuccess(): void
+    public function testUploadStatement(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","loans":[{"entity":"Housemates","type":"group","balance":-54.99,"description":"you owe"},{"entity":"Jeff","type":"contact","balance":-4.5,"description":"you owe"},{"entity":"harshi","type":"contact","balance":444.24,"description":"you receive"},{"entity":"Buxfer Inc","type":"contact","balance":959,"description":"you receive"}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->loggedInClient([$this->json('{"response":{"status":"OK","uploaded":3,"balance":10.5}}')]);
 
-        $client = new Client(['handler' => $handlerStack]);
-        $loans = $client->listLoans();
+        $result = $client->uploadStatement(['accountId' => '1000', 'statement' => 'a,b', 'dateFormat' => 'DD/MM/YYYY']);
 
-        $this->assertCount(4, $loans);
-        $item = $loans[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('-54.99', $item['balance']);
-    }
+        $this->assertSame(3, $result['uploaded']);
 
-    public function testListLoansFail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $this->expectException(BuxferApiException::class);
-        $client->listLoans();
-    }
-
-    public function testListTagsSuccess(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","tags":[{"id":"080ed5cb2aa1aaf7986d2cc58c5d7f1f","name":"Home","parentId":-1},{"id":"7e4008367454d64628775faf78287b9b","name":"Rent","parentId":"080ed5cb2aa1aaf7986d2cc58c5d7f1f"}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $tags = $client->listTags();
-
-        $this->assertCount(2, $tags);
-        $item = $tags[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('080ed5cb2aa1aaf7986d2cc58c5d7f1f', $item['id']);
-    }
-
-    public function testListTagsFail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $this->expectException(BuxferApiException::class);
-        $client->listTags();
-    }
-
-    public function testListBudgetsSuccess(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","budgets":[{"id":"0e51dc6749e3a8a7f724c131b30cf712","name":"Food","limit":"205","remaining":-52.85,"period":"1 month","currentPeriod":"Feb 08","tags":"eatingOut","keywords":[]}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $tags = $client->listBudgets();
-
-        $this->assertCount(1, $tags);
-        $item = $tags[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('0e51dc6749e3a8a7f724c131b30cf712', $item['id']);
-    }
-
-    public function testListBudgetsFail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $this->expectException(BuxferApiException::class);
-        $client->listBudgets();
-    }
-
-    public function testListRemindersSuccess(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","reminders":[{"id":"ab6e5ef4c574eaac1b7c64223434713e","name":"AT&T bill","startDate":"2008-11-08","period":"1 month","amount":50,"accountId":"8a0776e351983cd74bc014fde2f54935"}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $tags = $client->listReminders();
-
-        $this->assertCount(1, $tags);
-        $item = $tags[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('ab6e5ef4c574eaac1b7c64223434713e', $item['id']);
-    }
-
-    public function testListRemindersFail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $this->expectException(BuxferApiException::class);
-        $client->listReminders();
-    }
-
-    public function testListGroupsSuccess(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","groups":[{"id":"74a31314a31ab59c938d6d18679ce773","name":"Housemates","consolidated":true,"members":[{"member":{"id":"92fc6740165e7a1a7c578a916dc60444","name":"John","email":"...","balance":30.00},"member":{"id":"41cd07723def2a26c6a51882bf8e31d3","name":"Pete","email":"...","balance":-45.00},"member":{"id":"fb69cc3d5295ad73f3f397e1a4e94e05","name":"Emily","email":"...","balance":20.00},"member":{"id":"3d85d5f681ee2d80764dfc647393e802","name":"Lisa","email":"...","balance":-5.00}}]}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $groups = $client->listGroups();
-
-        $this->assertCount(1, $groups);
-        $item = $groups[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('74a31314a31ab59c938d6d18679ce773', $item['id']);
-    }
-
-    public function testListGroupsFail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $this->expectException(BuxferApiException::class);
-        $client->listGroups();
-    }
-
-    public function testListContactsSuccess(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","contacts":[{"id":"3d85d5f681ee2d80764dfc647393e802","name":"Pete","email":"...","balance":959},{"id":"15aa85c42ba084f0c183b1d35f6b9c1e","name":"Lisa","email":"...","balance":444.24}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $contacts = $client->listContacts();
-
-        $this->assertCount(2, $contacts);
-        $item = $contacts[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('3d85d5f681ee2d80764dfc647393e802', $item['id']);
-    }
-
-    public function testListContactsFail(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $this->expectException(BuxferApiException::class);
-        $client->listContacts();
-    }
-
-    public function testUploadStatementSuccess(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","uploaded":true,"balance":1015.17}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
-
-        $client = new Client(['handler' => $handlerStack]);
-        $client->uploadStatement();
-        $this->assertCount(0, $mock);
+        $request = $this->lastRequest();
+        $this->assertSame('POST', $request->getMethod());
+        $this->assertSame('/api/upload_statement', $request->getUri()->getPath());
+        $this->assertSame('accountId=1000&statement=a%2Cb&dateFormat=DD%2FMM%2FYYYY', (string) $request->getBody());
     }
 
     public function testUploadStatementFail(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->loggedInClient([$this->json(self::ERROR)]);
 
-        $client = new Client(['handler' => $handlerStack]);
         $this->expectException(BuxferApiException::class);
-        $client->uploadStatement();
+        $client->uploadStatement(['accountId' => '1000', 'statement' => '']);
     }
 
-    public function testListTransactionsSuccess(): void
+    public function testListTransactions(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","numTransactions":1334,"transactions":[{"id":"2d510c2696ec50d19a4e122129c455df","description":"RECURRING TRANSFER REF #OPEQG7BT","date":"21 Feb","type":"income","amount":25,"accountId":"eca68525d89d2385dda040c3b5c571c2","tags":"transfer"},{"id":"45fd72247572d026f165aa5256ffea6b","description":"RECURRING TRANSFER REF #OPE7XXPW","date":"20 Feb","type":"expense","amount":25,"accountId":"eca68525d89d2385dda040c3b5c571c2","tags":"transfer"},{"id":"bb4871250c00d240de54ed522e9adaf6","description":"other world computing: universal hd adapter (ide/sata : usb 2)","date":"17 Feb","type":"sharedbill","amount":67.85,"accountId":"e7b9d4d7c6974ad1e9ee320ad302874d","tags":"","extraInfo":"This transaction is a shared expense of $67.85, paid by John, split equally between me and John."}]}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->loggedInClient([$this->json('{"response":{"status":"OK","numTransactions":2,"transactions":[{"id":"t1"},{"id":"t2"}]}}')]);
 
-        $client = new Client(['handler' => $handlerStack]);
-        $transactions = $client->listTransactions();
+        $transactions = $client->listTransactions(['accountName' => 'My Acc&1', 'page' => 2]);
 
-        $this->assertCount(3, $transactions);
-        $item = $transactions[0];
-        $this->assertIsArray($item);
-        $this->assertEquals('2d510c2696ec50d19a4e122129c455df', $item['id']);
-
-        $this->assertGreaterThanOrEqual(0.0, $client->getLastDuration());
+        $this->assertCount(2, $transactions);
+        $this->assertSame(
+            'token=' . self::TOKEN . '&accountName=My+Acc%261&page=2',
+            $this->lastRequest()->getUri()->getQuery()
+        );
     }
 
     public function testListTransactionsFail(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->loggedInClient([$this->json(self::ERROR)]);
 
-        $client = new Client(['handler' => $handlerStack]);
         $this->expectException(BuxferApiException::class);
         $client->listTransactions();
     }
 
-    public function testAddTransactionSuccess(): void
+    public function testListAllTransactionsFollowsPages(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"response":{"status":"OK","transactionAdded":true,"parseStatus":"success"}}')
+        $page1 = array_fill(0, Client::PAGE_SIZE, ['id' => 'x']);
+        $client = $this->loggedInClient([
+            $this->json((string) json_encode(['response' => ['numTransactions' => 101, 'transactions' => $page1]])),
+            $this->json((string) json_encode(['response' => ['numTransactions' => 101, 'transactions' => [['id' => 'y']]]])),
         ]);
-        $handlerStack = HandlerStack::create($mock);
 
-        $client = new Client(['handler' => $handlerStack]);
-        $params = [];
-        $client->addTransaction($params);
-        $this->assertCount(0, $mock);
+        $transactions = $client->listAllTransactions(['accountId' => '7', 'page' => 5]);
+
+        $this->assertCount(101, $transactions);
+        $this->assertCount(3, $this->requests);
+        $this->assertSame('token=' . self::TOKEN . '&accountId=7&page=1', $this->requestAt(1)->getUri()->getQuery());
+        $this->assertSame('token=' . self::TOKEN . '&accountId=7&page=2', $this->requestAt(2)->getUri()->getQuery());
+    }
+
+    public function testListAllTransactionsStopsOnShortPage(): void
+    {
+        $client = $this->loggedInClient([$this->json('{"response":{"transactions":[{"id":"t1"}]}}')]);
+
+        $this->assertCount(1, $client->listAllTransactions());
+        $this->assertCount(2, $this->requests);
+    }
+
+    public function testAddTransaction(): void
+    {
+        $client = $this->loggedInClient([$this->json('{"response":{"id":"t9","description":"Paycheck"}}')]);
+
+        $created = $client->addTransaction(['description' => 'Paycheck', 'amount' => '4000', 'type' => 'income']);
+
+        $this->assertSame('t9', $created['id']);
+
+        $request = $this->lastRequest();
+        $this->assertSame('POST', $request->getMethod());
+        $this->assertSame('/api/transaction_add', $request->getUri()->getPath());
+        $this->assertSame('description=Paycheck&amount=4000&type=income', (string) $request->getBody());
     }
 
     public function testAddTransactionFail(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], '{"error":{"request_id":1582470326,"type":"client","message":"Email or username does not match an existing account."}}')
-        ]);
-        $handlerStack = HandlerStack::create($mock);
+        $client = $this->loggedInClient([$this->json(self::ERROR)]);
 
-        $client = new Client(['handler' => $handlerStack]);
         $this->expectException(BuxferApiException::class);
-        $params = [];
-        $client->addTransaction($params);
+        $client->addTransaction([]);
+    }
+
+    public function testEditTransaction(): void
+    {
+        $client = $this->loggedInClient([$this->json('{"response":{"id":"t9","amount":5}}')]);
+
+        $updated = $client->editTransaction(['id' => 't9', 'amount' => '5']);
+
+        $this->assertSame(5, $updated['amount']);
+        $this->assertSame('/api/transaction_edit', $this->lastRequest()->getUri()->getPath());
+        $this->assertSame('id=t9&amount=5', (string) $this->lastRequest()->getBody());
+    }
+
+    public function testDeleteTransaction(): void
+    {
+        $client = $this->loggedInClient([$this->json('{"response":{}}')]);
+
+        $client->deleteTransaction('t9');
+
+        $this->assertSame('/api/transaction_delete', $this->lastRequest()->getUri()->getPath());
+        $this->assertSame('id=t9', (string) $this->lastRequest()->getBody());
+    }
+
+    public function testTransportErrorDoesNotLeakToken(): void
+    {
+        $url = Client::BUXFER_URL . 'accounts?token=' . self::TOKEN;
+        $client = $this->loggedInClient([new ConnectException('cURL error 28 for ' . $url, new Request('GET', $url))]);
+
+        try {
+            $client->listAccounts();
+            $this->fail('Exception expected');
+        } catch (BuxferApiException $exception) {
+            $this->assertStringNotContainsString(self::TOKEN, $exception->getMessage());
+            $this->assertNull($exception->getPrevious(), 'the Guzzle exception carries the token in its message');
+        }
+    }
+
+    public function testHttpErrorWithBuxferMessage(): void
+    {
+        $client = $this->loggedInClient([$this->json(self::ERROR, 401)]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('Email or username does not match an existing account.');
+        $client->listAccounts();
+    }
+
+    public function testHttpErrorWithoutJson(): void
+    {
+        $client = $this->loggedInClient([$this->json('<html>Bad gateway</html>', 502)]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('HTTP status 502');
+        $client->listAccounts();
+    }
+
+    public function testMalformedJson(): void
+    {
+        $client = $this->loggedInClient([$this->json('<html>maintenance</html>')]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('Invalid JSON received');
+        $client->listAccounts();
+    }
+
+    public function testMissingResponseKey(): void
+    {
+        $client = $this->loggedInClient([$this->json('{"status":"OK"}')]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('Invalid response received');
+        $client->listAccounts();
+    }
+
+    public function testLastDuration(): void
+    {
+        $client = $this->loggedInClient([]);
+
+        $this->assertGreaterThanOrEqual(0.0, $client->getLastDuration());
+        $this->assertLessThan(5.0, $client->getLastDuration());
     }
 }
