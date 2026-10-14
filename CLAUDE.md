@@ -12,12 +12,12 @@ PHP library (`indy2kro/buxfer-api`, PSR-4 namespace `BuxferApi\` → `src/Buxfer
 
 ```
 vendor/bin/phpunit
-vendor/bin/phpcs            # PSR12, config: phpcs.xml
-vendor/bin/phpstan analyse  # level max, src and tests
+vendor/bin/php-cs-fixer fix --dry-run --diff  # PER-CS plus strict rules, config: .php-cs-fixer.dist.php
+vendor/bin/phpstan analyse  # level max plus strict rules, src and tests
 vendor/bin/rector --dry-run # config: rector.php
 ```
 
-Automatic fixes: `vendor/bin/phpcbf`, `vendor/bin/rector`.
+Automatic fixes: `composer fix` (php-cs-fixer and rector).
 
 Single test: `vendor/bin/phpunit --filter testLoginSuccess tests/ClientTest.php`
 
@@ -28,7 +28,8 @@ Single test: `vendor/bin/phpunit --filter testLoginSuccess tests/ClientTest.php`
 - `httpRequest()` never lets a Guzzle exception escape (their messages contain the URL and token) and does not chain it as previous; it sends `http_errors => false` and turns 4xx/5xx into `BuxferApi\Exception`.
 - Config is limited to `user_agent`, `timeout` and `handler` (validated in `applyConfig()`). `setConfig()` rebuilds the HTTP client unless one was injected into the constructor.
 - `listAllTransactions()` follows Buxfer's 100-per-page pagination using `numTransactions`.
-- Conventions: PSR12, short array syntax, `declare(strict_types=1)`, no underscore prefixes. Dependabot (composer and github-actions, weekly) keeps dependencies and pinned action SHAs current. Record user-visible changes in `CHANGELOG.md` and bump `Client::VERSION` when tagging.
+- Conventions: PER-CS (enforced by PHP CS Fixer), short array syntax, `declare(strict_types=1)`, no underscore prefixes. Dependabot (composer and github-actions, weekly) keeps dependencies and pinned action SHAs current. Record user-visible changes in `CHANGELOG.md` and bump `Client::VERSION` when tagging.
+- Tool interplay worth knowing: `rector.php` skips `PreferPHPUnitThisCallRector` (PHPStan strict rules require `self::assert*()`) and `ThrowWithPreviousExceptionRector` (chaining the Guzzle exception would put the token back into traces). Redirects are disabled in `httpRequest()` on purpose.
 - Buxfer's command names are `transaction_add`, `transaction_edit`, `transaction_delete` and `upload_statement` (see https://www.buxfer.com/help/api).
 
 ## Testing

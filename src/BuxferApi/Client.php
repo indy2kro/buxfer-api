@@ -6,26 +6,38 @@ namespace BuxferApi;
 
 use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\Exception\GuzzleException;
+use SensitiveParameter;
 
 /**
+ * Buxfer API client
+ *
+ * Extending: the protected members are the supported hooks and follow semantic versioning, namely
+ * restRequest(), httpRequest(), authenticatedUrl() and buildHttpClient(). Properties and the other
+ * protected helpers are internal and may change in a minor release.
+ *
  * @phpstan-type FormParams array<string, scalar|array<mixed>|null>
  */
 class Client
 {
-    public const BUXFER_URL = 'https://www.buxfer.com/api/';
+    public const string BUXFER_URL = 'https://www.buxfer.com/api/';
 
     /**
      * Update this when tagging a release; it is part of the default User-Agent.
      */
-    public const VERSION = '2.0.0';
+    public const string VERSION = '2.0.0';
 
-    public const METHOD_GET = 'GET';
-    public const METHOD_POST = 'POST';
+    public const string METHOD_GET = 'GET';
+    public const string METHOD_POST = 'POST';
 
     /**
      * Number of transactions Buxfer returns per page
      */
-    public const PAGE_SIZE = 100;
+    public const int PAGE_SIZE = 100;
+
+    /**
+     * Upper bound for listAllTransactions(), so a server that never ends the pagination cannot loop forever
+     */
+    public const int MAX_PAGES = 1000;
 
     protected string $userAgent = 'PHP BuxferApi ' . self::VERSION;
 
@@ -36,7 +48,7 @@ class Client
      *
      * @var callable|null
      */
-    protected $handler = null;
+    protected $handler;
 
     protected HttpClient $httpClient;
 
@@ -61,7 +73,7 @@ class Client
     {
         $this->applyConfig($config);
 
-        $this->customHttpClient = $httpClient !== null;
+        $this->customHttpClient = $httpClient instanceof \GuzzleHttp\Client;
         $this->httpClient = $httpClient ?? $this->buildHttpClient();
     }
 
@@ -100,7 +112,7 @@ class Client
      * @return string The token, also used for all following requests
      * @throws Exception
      */
-    public function login(string $username, string $password): string
+    public function login(string $username, #[SensitiveParameter] string $password): string
     {
         if ($username === '') {
             throw new Exception('Empty Buxfer username provided');
@@ -114,7 +126,7 @@ class Client
         $response = $this->restRequest(
             self::BUXFER_URL . 'login',
             self::METHOD_POST,
-            ['email' => $username, 'password' => $password]
+            ['email' => $username, 'password' => $password],
         );
 
         if (!isset($response['token']) || !is_string($response['token']) || $response['token'] === '') {
@@ -198,6 +210,8 @@ class Client
      */
     public function uploadStatement(array $params): array
     {
+        $this->requireParams($params, ['accountId', 'statement']);
+
         return $this->restRequest($this->authenticatedUrl('upload_statement'), self::METHOD_POST, $params);
     }
 
@@ -226,20 +240,30 @@ class Client
         unset($filters['page']);
 
         $all = [];
-        $page = 1;
+        $previous = null;
 
-        do {
+        for ($page = 1; $page <= static::MAX_PAGES; $page++) {
             $response = $this->fetchTransactions($filters + ['page' => $page]);
             $transactions = $this->extract($response, 'transactions');
+
+            // The same page twice means the server ignores the page parameter
+            if ($transactions === $previous) {
+                throw new Exception('Buxfer returned the same page of transactions twice');
+            }
+
             array_push($all, ...$transactions);
+            $previous = $transactions;
 
             $total = isset($response['numTransactions']) && is_int($response['numTransactions'])
                 ? $response['numTransactions']
                 : null;
-            $page++;
-        } while (count($transactions) >= self::PAGE_SIZE && ($total === null || count($all) < $total));
 
-        return $all;
+            if (count($transactions) < self::PAGE_SIZE || ($total !== null && count($all) >= $total)) {
+                return $all;
+            }
+        }
+
+        throw new Exception('More than ' . static::MAX_PAGES . ' pages of transactions');
     }
 
     /**
@@ -259,6 +283,8 @@ class Client
      */
     public function editTransaction(array $transaction): array
     {
+        $this->requireParams($transaction, ['id']);
+
         return $this->restRequest($this->authenticatedUrl('transaction_edit'), self::METHOD_POST, $transaction);
     }
 
@@ -268,6 +294,7 @@ class Client
      */
     public function deleteTransaction(string $id): void
     {
+        $this->requireParams(['id' => $id], ['id']);
         $this->restRequest($this->authenticatedUrl('transaction_delete'), self::METHOD_POST, ['id' => $id]);
     }
 
@@ -285,35 +312,61 @@ class Client
     }
 
     /**
+     * Keep the token out of var_dump() and print_r() output, which often ends up in logs
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return [
+            'userAgent' => $this->userAgent,
+            'timeout' => $this->timeout,
+            'loggedIn' => $this->token !== '',
+            'lastDuration' => $this->lastDuration,
+        ];
+    }
+
+    /**
+     * Apply configuration. Everything is validated before anything is stored, so an invalid
+     * value leaves the configuration unchanged.
+     *
      * @param array<string, mixed> $config
      * @throws Exception
      */
     protected function applyConfig(array $config): void
     {
+        $userAgent = $this->userAgent;
+        $timeout = $this->timeout;
+        $handler = $this->handler;
+
         foreach ($config as $key => $value) {
             switch ($key) {
                 case 'user_agent':
-                    if (!is_string($value)) {
-                        throw new Exception('Configuration "user_agent" must be a string');
+                    if (!is_string($value) || $value === '') {
+                        throw new Exception('Configuration "user_agent" must be a non-empty string');
                     }
-                    $this->userAgent = $value;
+                    $userAgent = $value;
                     break;
                 case 'timeout':
-                    if (!is_int($value) && !is_float($value)) {
-                        throw new Exception('Configuration "timeout" must be a number');
+                    if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value) || $value <= 0) {
+                        throw new Exception('Configuration "timeout" must be a positive number');
                     }
-                    $this->timeout = $value;
+                    $timeout = $value;
                     break;
                 case 'handler':
                     if ($value !== null && !is_callable($value)) {
                         throw new Exception('Configuration "handler" must be callable');
                     }
-                    $this->handler = $value;
+                    $handler = $value;
                     break;
                 default:
                     throw new Exception('Unknown configuration "' . $key . '"');
             }
         }
+
+        $this->userAgent = $userAgent;
+        $this->timeout = $timeout;
+        $this->handler = $handler;
     }
 
     protected function buildHttpClient(): HttpClient
@@ -409,7 +462,8 @@ class Client
 
     /**
      * Run an HTTP request. Guzzle exceptions are not passed on, because their messages contain the
-     * request URL and with it the token.
+     * request URL and with it the token. Redirects are not followed, since a redirect to another
+     * scheme or host would send the token along.
      *
      * @param FormParams $postParams Parameters used for POST
      * @return string Response body
@@ -424,22 +478,24 @@ class Client
                 ? $this->httpClient->request($method, $url, [
                     'headers' => ['User-Agent' => $this->userAgent],
                     'http_errors' => false,
+                    'allow_redirects' => false,
                     'form_params' => $postParams,
                 ])
                 : $this->httpClient->request($method, $url, [
                     'headers' => ['User-Agent' => $this->userAgent],
                     'http_errors' => false,
+                    'allow_redirects' => false,
                 ]);
         } catch (GuzzleException $exception) {
             throw new Exception('HTTP request failed (' . $exception::class . ')');
+        } finally {
+            $this->lastDuration = round(microtime(true) - $startTime, 4);
         }
 
         $body = (string) $response->getBody();
-        $this->lastDuration = round(microtime(true) - $startTime, 4);
-
         $status = $response->getStatusCode();
 
-        if ($status >= 400) {
+        if ($status >= 300) {
             $decoded = $this->decode($body);
             $message = $decoded !== null ? $this->errorMessage($decoded) : null;
 
@@ -447,6 +503,20 @@ class Client
         }
 
         return $body;
+    }
+
+    /**
+     * @param array<mixed> $params
+     * @param list<string> $names
+     * @throws Exception
+     */
+    private function requireParams(array $params, array $names): void
+    {
+        foreach ($names as $name) {
+            if (!isset($params[$name]) || $params[$name] === '' || $params[$name] === []) {
+                throw new Exception('Missing required parameter "' . $name . '"');
+            }
+        }
     }
 
     /**

@@ -5,7 +5,7 @@
 tests/                  export-ignore
 .claude/                export-ignore
 CLAUDE.md               export-ignore
-phpcs.xml               export-ignore
+.php-cs-fixer.dist.php              export-ignore
 phpstan.neon            export-ignore
 phpunit.xml             export-ignore
 .gitignore              export-ignore
@@ -13,3 +13,5 @@ phpunit.xml             export-ignore
 /rector.php             export-ignore
 codecov.yml             export-ignore
 CHANGELOG.md            export-ignore
+.editorconfig           export-ignore
+SECURITY.md             export-ignore

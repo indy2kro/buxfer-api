@@ -12,10 +12,16 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run of the previous one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   php-version:
     name: PHP ${{ matrix.php-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -67,7 +73,7 @@ jobs:
       # Same commands as "composer quality", so local and CI results match.
       - name: Code style
         if: ${{ env.STATIC_CHECKS == 'true' }}
-        run: vendor/bin/phpcs
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff
 
       - name: PHPStan
         if: ${{ env.STATIC_CHECKS == 'true' }}
@@ -101,6 +107,7 @@ jobs:
   lowest:
     name: Lowest dependencies (PHP 8.3)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -118,6 +125,9 @@ jobs:
         run: |
           composer update --prefer-lowest --prefer-stable --no-progress
           composer show --direct
+
+      - name: Audit dependencies
+        run: composer audit
 
       - name: Tests
         run: vendor/bin/phpunit

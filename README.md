@@ -12,11 +12,11 @@ composer require indy2kro/buxfer-api
 * `login(string $username, string $password): string` - log in with the Buxfer credentials (POST, the credentials are not sent in the URL); returns the token and is mandatory before any other action
 * `listAccounts()`, `listLoans()`, `listTags()`, `listBudgets()`, `listReminders()`, `listGroups()`, `listContacts()` - return the matching list
 * `listTransactions(array $filters = []): array` - one page (at most 100) of transactions. Filters: `accountId` or `accountName`, `tagId` or `tagName`, `startDate` and `endDate`, `budgetId` or `budgetName`, `contactId` or `contactName`, `groupId` or `groupName`, `status`, `page`
-* `listAllTransactions(array $filters = []): array` - all transactions matching the filters, following the pagination
+* `listAllTransactions(array $filters = []): array` - all transactions matching the filters, following the pagination (throws if the server repeats a page or returns more than `Client::MAX_PAGES` pages)
 * `addTransaction(array $transaction): array` - add a transaction (`transaction_add`), returns the created transaction
-* `editTransaction(array $transaction): array` - change a transaction (`transaction_edit`); `id` plus the fields to change
+* `editTransaction(array $transaction): array` - change a transaction (`transaction_edit`); `id` is required, plus the fields to change
 * `deleteTransaction(string $id): void` - delete a transaction (`transaction_delete`)
-* `uploadStatement(array $params): array` - upload a statement (`upload_statement`): `accountId`, `statement` and optionally `dateFormat`
+* `uploadStatement(array $params): array` - upload a statement (`upload_statement`): `accountId` and `statement` are required, `dateFormat` is optional
 
 See the Buxfer API description for the available parameters of each command.
 
@@ -31,12 +31,12 @@ Every error is thrown as `\BuxferApi\Exception`, including transport errors and 
 
 ## Configuration
 
-Supported keys, all optional and checked when set (unknown keys throw):
+Supported keys, all optional and checked when set (unknown keys throw, and an invalid value leaves the configuration unchanged):
 
 ```php
 [
     'user_agent' => 'PHP BuxferApi ' . Client::VERSION, // string
-    'timeout' => 10,                                    // int|float, seconds
+    'timeout' => 10,                                    // int|float, seconds, greater than 0
     'handler' => null,                                  // callable, a Guzzle handler such as a HandlerStack
 ]
 ```
@@ -67,8 +67,17 @@ $buxferApi->addTransaction([
 
 ## Security notes
 
-Buxfer takes the session token as a URL query parameter, so request URLs are sensitive: do not log them or the requests of your HTTP client. The library does not pass on Guzzle exceptions, because their messages contain the request URL.
+Buxfer takes the session token as a URL query parameter, so request URLs are sensitive: do not log them or the requests of your HTTP client. The library does not pass on Guzzle exceptions, because their messages contain the request URL, and it does not follow redirects. See [SECURITY.md](SECURITY.md) for details and how to report a vulnerability.
+
+## Extending
+
+The protected `restRequest()`, `httpRequest()`, `authenticatedUrl()` and `buildHttpClient()` methods are the supported extension hooks and follow semantic versioning. Other protected members are internal and may change in a minor release.
 
 ## Development
 
-`composer quality` runs PHPUnit, PHPCS (PSR12), PHPStan (max) and Rector. See `CHANGELOG.md` for changes between versions.
+```
+composer quality   # PHPUnit, PHP CS Fixer (dry run), PHPStan (max, strict rules), Rector (dry run)
+composer fix       # apply PHP CS Fixer and Rector
+```
+
+See `CHANGELOG.md` for changes between versions.
