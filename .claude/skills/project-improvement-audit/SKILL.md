@@ -18,7 +18,7 @@ Treat both as sensitive.
 
 - **No subagents.** Work in the main conversation.
 - Up to **20 deduplicated items** (honor an explicit override; never pad). One-sentence rationale each.
-- Skip pure style findings (PHPCS, PHPStan and Rector already guard them).
+- Skip pure style findings (PHP CS Fixer, PHPStan and Rector already guard them).
 - Never pipe a gate through `tail` and then chain on it: it hides the exit code.
   Capture output to a file and check `$?` separately.
 - `rg -g` can be rewritten by the rtk hook and fail. Use the Grep tool or `rtk proxy rg ...`.
@@ -50,7 +50,7 @@ Tie-break: `sec` > `bug` > `api` > `ux`.
    composer update --no-progress
    composer validate --strict
    composer audit ; composer outdated --direct
-   composer quality          # phpunit, phpcs, phpstan, rector --dry-run
+   composer quality          # phpunit, php-cs-fixer --dry-run, phpstan, rector --dry-run
    gitleaks detect --no-banner -s .
    actionlint
    ```

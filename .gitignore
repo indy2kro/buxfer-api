@@ -2,7 +2,7 @@
 /composer.lock
 /.phpunit.result.cache
 /.phpunit.cache
-/.phpcs-cache
+/.php-cs-fixer.cache
 /.claude/*
 !/.claude/skills/
 /coverage.xml

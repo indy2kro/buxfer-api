@@ -6,6 +6,7 @@ namespace BuxferApi\Test;
 
 use BuxferApi\Client;
 use BuxferApi\Exception as BuxferApiException;
+use Closure;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
@@ -15,6 +16,7 @@ use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
+use Throwable;
 
 final class ClientTest extends TestCase
 {
@@ -28,21 +30,21 @@ final class ClientTest extends TestCase
     private array $requests = [];
 
     /**
-     * @param list<Response|\Throwable> $responses
+     * @param list<Response|Throwable|Closure> $responses
      */
     private function client(array $responses): Client
     {
         $this->requests = [];
-        $stack = HandlerStack::create(new MockHandler($responses));
-        $stack->push(Middleware::tap(function (RequestInterface $request): void {
+        $handlerStack = HandlerStack::create(new MockHandler($responses));
+        $handlerStack->push(Middleware::tap(function (RequestInterface $request): void {
             $this->requests[] = $request;
         }));
 
-        return new Client(['handler' => $stack]);
+        return new Client(['handler' => $handlerStack]);
     }
 
     /**
-     * @param list<Response|\Throwable> $responses Responses after the login
+     * @param list<Response|Throwable|Closure> $responses Responses after the login
      */
     private function loggedInClient(array $responses): Client
     {
@@ -71,21 +73,21 @@ final class ClientTest extends TestCase
     {
         $client = new Client();
 
-        $this->assertSame(10, $client->getConfig()['timeout']);
+        self::assertSame(10, $client->getConfig()['timeout']);
 
         $client->setConfig(['timeout' => 20]);
 
-        $this->assertSame(20, $client->getConfig()['timeout']);
+        self::assertSame(20, $client->getConfig()['timeout']);
     }
 
     public function testSetConfigRebuildsHttpClient(): void
     {
         $client = new Client();
-        $stack = HandlerStack::create(new MockHandler([$this->json('{"response":{"token":"abc"}}')]));
+        $handlerStack = HandlerStack::create(new MockHandler([$this->json('{"response":{"token":"abc"}}')]));
 
-        $client->setConfig(['handler' => $stack]);
+        $client->setConfig(['handler' => $handlerStack]);
 
-        $this->assertSame('abc', $client->login('testlogin', 'testpass'));
+        self::assertSame('abc', $client->login('testlogin', 'testpass'));
     }
 
     public function testSetConfigRejectsUnknownKey(): void
@@ -108,14 +110,14 @@ final class ClientTest extends TestCase
     {
         $client = $this->loggedInClient([]);
 
-        $this->assertSame(self::TOKEN, $client->getToken());
+        self::assertSame(self::TOKEN, $client->getToken());
 
         $request = $this->lastRequest();
-        $this->assertSame('POST', $request->getMethod());
-        $this->assertSame('/api/login', $request->getUri()->getPath());
-        $this->assertSame('', $request->getUri()->getQuery(), 'credentials must not be sent in the URL');
-        $this->assertSame('email=testlogin&password=testpass', (string) $request->getBody());
-        $this->assertStringStartsWith('PHP BuxferApi', $request->getHeaderLine('User-Agent'));
+        self::assertSame('POST', $request->getMethod());
+        self::assertSame('/api/login', $request->getUri()->getPath());
+        self::assertSame('', $request->getUri()->getQuery(), 'credentials must not be sent in the URL');
+        self::assertSame('email=testlogin&password=testpass', (string) $request->getBody());
+        self::assertStringStartsWith('PHP BuxferApi', $request->getHeaderLine('User-Agent'));
     }
 
     public function testLoginFail(): void
@@ -142,9 +144,9 @@ final class ClientTest extends TestCase
 
         try {
             $client->login('', 'testpass');
-            $this->fail('Empty username accepted');
+            self::fail('Empty username accepted');
         } catch (BuxferApiException $exception) {
-            $this->assertStringContainsString('username', $exception->getMessage());
+            self::assertStringContainsString('username', $exception->getMessage());
         }
 
         $this->expectExceptionMessage('password');
@@ -152,68 +154,76 @@ final class ClientTest extends TestCase
     }
 
     /**
-     * @return array<string, array{string, string}>
+     * @return array<string, array{Closure(Client): array<mixed>, string}>
      */
     public static function listProvider(): array
     {
         return [
-            'accounts' => ['listAccounts', 'accounts'],
-            'loans' => ['listLoans', 'loans'],
-            'tags' => ['listTags', 'tags'],
-            'budgets' => ['listBudgets', 'budgets'],
-            'reminders' => ['listReminders', 'reminders'],
-            'groups' => ['listGroups', 'groups'],
-            'contacts' => ['listContacts', 'contacts'],
+            'accounts' => [static fn(Client $client): array => $client->listAccounts(), 'accounts'],
+            'loans' => [static fn(Client $client): array => $client->listLoans(), 'loans'],
+            'tags' => [static fn(Client $client): array => $client->listTags(), 'tags'],
+            'budgets' => [static fn(Client $client): array => $client->listBudgets(), 'budgets'],
+            'reminders' => [static fn(Client $client): array => $client->listReminders(), 'reminders'],
+            'groups' => [static fn(Client $client): array => $client->listGroups(), 'groups'],
+            'contacts' => [static fn(Client $client): array => $client->listContacts(), 'contacts'],
         ];
     }
 
     /**
-     * @return array<string, array{string}>
+     * @return array<string, array{Closure(Client): array<mixed>}>
      */
-    public static function methodProvider(): array
+    public static function listCallProvider(): array
     {
-        return array_map(static fn (array $case): array => [$case[0]], self::listProvider());
+        return array_map(static fn(array $case): array => [$case[0]], self::listProvider());
     }
 
+    /**
+     * @param Closure(Client): array<mixed> $list
+     */
     #[DataProvider('listProvider')]
-    public function testListSuccess(string $method, string $endpoint): void
+    public function testListSuccess(Closure $list, string $endpoint): void
     {
         $client = $this->loggedInClient([$this->json('{"response":{"status":"OK","' . $endpoint . '":[{"id":"a1"},{"id":"b2"}]}}')]);
 
-        $items = $client->$method();
+        $items = $list($client);
 
-        $this->assertIsArray($items);
-        $this->assertCount(2, $items);
-        $this->assertSame(['id' => 'a1'], $items[0]);
+        self::assertCount(2, $items);
+        self::assertSame(['id' => 'a1'], $items[0]);
 
         $request = $this->lastRequest();
-        $this->assertSame('GET', $request->getMethod());
-        $this->assertSame('/api/' . $endpoint, $request->getUri()->getPath());
-        $this->assertSame('token=' . self::TOKEN, $request->getUri()->getQuery());
+        self::assertSame('GET', $request->getMethod());
+        self::assertSame('/api/' . $endpoint, $request->getUri()->getPath());
+        self::assertSame('token=' . self::TOKEN, $request->getUri()->getQuery());
     }
 
-    #[DataProvider('methodProvider')]
-    public function testListFail(string $method): void
+    /**
+     * @param Closure(Client): array<mixed> $list
+     */
+    #[DataProvider('listCallProvider')]
+    public function testListFail(Closure $list): void
     {
         $client = $this->loggedInClient([$this->json(self::ERROR)]);
 
         $this->expectException(BuxferApiException::class);
-        $client->$method();
+        $list($client);
     }
 
-    #[DataProvider('methodProvider')]
-    public function testListRequiresLogin(string $method): void
+    /**
+     * @param Closure(Client): array<mixed> $list
+     */
+    #[DataProvider('listCallProvider')]
+    public function testListRequiresLogin(Closure $list): void
     {
         $client = $this->client([]);
 
         try {
-            $client->$method();
-            $this->fail('Request sent without a token');
+            $list($client);
+            self::fail('Request sent without a token');
         } catch (BuxferApiException $exception) {
-            $this->assertStringContainsString('login()', $exception->getMessage());
+            self::assertStringContainsString('login()', $exception->getMessage());
         }
 
-        $this->assertCount(0, $this->requests);
+        self::assertCount(0, $this->requests);
     }
 
     public function testMissingListKeyFails(): void
@@ -231,12 +241,12 @@ final class ClientTest extends TestCase
 
         $result = $client->uploadStatement(['accountId' => '1000', 'statement' => 'a,b', 'dateFormat' => 'DD/MM/YYYY']);
 
-        $this->assertSame(3, $result['uploaded']);
+        self::assertSame(3, $result['uploaded']);
 
         $request = $this->lastRequest();
-        $this->assertSame('POST', $request->getMethod());
-        $this->assertSame('/api/upload_statement', $request->getUri()->getPath());
-        $this->assertSame('accountId=1000&statement=a%2Cb&dateFormat=DD%2FMM%2FYYYY', (string) $request->getBody());
+        self::assertSame('POST', $request->getMethod());
+        self::assertSame('/api/upload_statement', $request->getUri()->getPath());
+        self::assertSame('accountId=1000&statement=a%2Cb&dateFormat=DD%2FMM%2FYYYY', (string) $request->getBody());
     }
 
     public function testUploadStatementFail(): void
@@ -253,10 +263,10 @@ final class ClientTest extends TestCase
 
         $transactions = $client->listTransactions(['accountName' => 'My Acc&1', 'page' => 2]);
 
-        $this->assertCount(2, $transactions);
-        $this->assertSame(
+        self::assertCount(2, $transactions);
+        self::assertSame(
             'token=' . self::TOKEN . '&accountName=My+Acc%261&page=2',
-            $this->lastRequest()->getUri()->getQuery()
+            $this->lastRequest()->getUri()->getQuery(),
         );
     }
 
@@ -278,18 +288,18 @@ final class ClientTest extends TestCase
 
         $transactions = $client->listAllTransactions(['accountId' => '7', 'page' => 5]);
 
-        $this->assertCount(101, $transactions);
-        $this->assertCount(3, $this->requests);
-        $this->assertSame('token=' . self::TOKEN . '&accountId=7&page=1', $this->requestAt(1)->getUri()->getQuery());
-        $this->assertSame('token=' . self::TOKEN . '&accountId=7&page=2', $this->requestAt(2)->getUri()->getQuery());
+        self::assertCount(101, $transactions);
+        self::assertCount(3, $this->requests);
+        self::assertSame('token=' . self::TOKEN . '&accountId=7&page=1', $this->requestAt(1)->getUri()->getQuery());
+        self::assertSame('token=' . self::TOKEN . '&accountId=7&page=2', $this->requestAt(2)->getUri()->getQuery());
     }
 
     public function testListAllTransactionsStopsOnShortPage(): void
     {
         $client = $this->loggedInClient([$this->json('{"response":{"transactions":[{"id":"t1"}]}}')]);
 
-        $this->assertCount(1, $client->listAllTransactions());
-        $this->assertCount(2, $this->requests);
+        self::assertCount(1, $client->listAllTransactions());
+        self::assertCount(2, $this->requests);
     }
 
     public function testAddTransaction(): void
@@ -298,12 +308,12 @@ final class ClientTest extends TestCase
 
         $created = $client->addTransaction(['description' => 'Paycheck', 'amount' => '4000', 'type' => 'income']);
 
-        $this->assertSame('t9', $created['id']);
+        self::assertSame('t9', $created['id']);
 
         $request = $this->lastRequest();
-        $this->assertSame('POST', $request->getMethod());
-        $this->assertSame('/api/transaction_add', $request->getUri()->getPath());
-        $this->assertSame('description=Paycheck&amount=4000&type=income', (string) $request->getBody());
+        self::assertSame('POST', $request->getMethod());
+        self::assertSame('/api/transaction_add', $request->getUri()->getPath());
+        self::assertSame('description=Paycheck&amount=4000&type=income', (string) $request->getBody());
     }
 
     public function testAddTransactionFail(): void
@@ -320,9 +330,9 @@ final class ClientTest extends TestCase
 
         $updated = $client->editTransaction(['id' => 't9', 'amount' => '5']);
 
-        $this->assertSame(5, $updated['amount']);
-        $this->assertSame('/api/transaction_edit', $this->lastRequest()->getUri()->getPath());
-        $this->assertSame('id=t9&amount=5', (string) $this->lastRequest()->getBody());
+        self::assertSame(5, $updated['amount']);
+        self::assertSame('/api/transaction_edit', $this->lastRequest()->getUri()->getPath());
+        self::assertSame('id=t9&amount=5', (string) $this->lastRequest()->getBody());
     }
 
     public function testDeleteTransaction(): void
@@ -331,8 +341,8 @@ final class ClientTest extends TestCase
 
         $client->deleteTransaction('t9');
 
-        $this->assertSame('/api/transaction_delete', $this->lastRequest()->getUri()->getPath());
-        $this->assertSame('id=t9', (string) $this->lastRequest()->getBody());
+        self::assertSame('/api/transaction_delete', $this->lastRequest()->getUri()->getPath());
+        self::assertSame('id=t9', (string) $this->lastRequest()->getBody());
     }
 
     public function testTransportErrorDoesNotLeakToken(): void
@@ -342,10 +352,10 @@ final class ClientTest extends TestCase
 
         try {
             $client->listAccounts();
-            $this->fail('Exception expected');
+            self::fail('Exception expected');
         } catch (BuxferApiException $exception) {
-            $this->assertStringNotContainsString(self::TOKEN, $exception->getMessage());
-            $this->assertNull($exception->getPrevious(), 'the Guzzle exception carries the token in its message');
+            self::assertStringNotContainsString(self::TOKEN, $exception->getMessage());
+            self::assertNull($exception->getPrevious(), 'the Guzzle exception carries the token in its message');
         }
     }
 
@@ -385,11 +395,176 @@ final class ClientTest extends TestCase
         $client->listAccounts();
     }
 
-    public function testLastDuration(): void
+    public function testLastDurationMeasuresTheRequest(): void
+    {
+        $client = $this->loggedInClient([
+            static function (): Response {
+                usleep(60000);
+
+                return new Response(200, [], '{"response":{"accounts":[]}}');
+            },
+        ]);
+
+        $client->listAccounts();
+
+        self::assertGreaterThanOrEqual(0.04, $client->getLastDuration());
+        self::assertLessThan(5.0, $client->getLastDuration());
+    }
+
+    public function testLastDurationIsUpdatedWhenTheRequestFails(): void
+    {
+        $client = $this->loggedInClient([
+            static function (): ConnectException {
+                usleep(60000);
+
+                return new ConnectException('timed out', new Request('GET', 'https://example.invalid/'));
+            },
+        ]);
+
+        try {
+            $client->listAccounts();
+            self::fail('Exception expected');
+        } catch (BuxferApiException) {
+            self::assertGreaterThanOrEqual(0.04, $client->getLastDuration());
+        }
+    }
+
+    public function testRedirectIsNotFollowed(): void
+    {
+        $client = $this->loggedInClient([
+            new Response(302, ['Location' => 'http://example.invalid/api/accounts?token=' . self::TOKEN]),
+            $this->json('{"response":{"accounts":[]}}'),
+        ]);
+
+        try {
+            $client->listAccounts();
+            self::fail('Exception expected');
+        } catch (BuxferApiException $exception) {
+            self::assertStringContainsString('HTTP status 302', $exception->getMessage());
+        }
+
+        self::assertCount(2, $this->requests, 'login and one request, the redirect target is not requested');
+    }
+
+    public function testPasswordIsRedactedInTraces(): void
+    {
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        $client = $this->client([$this->json(self::ERROR)]);
+
+        try {
+            $client->login('testlogin', 'verysecretpassword');
+            self::fail('Exception expected');
+        } catch (BuxferApiException $exception) {
+            self::assertStringNotContainsString('verysecret', $exception->getTraceAsString());
+        } finally {
+            ini_set('zend.exception_ignore_args', $previous === false ? '1' : $previous);
+        }
+    }
+
+    public function testTokenIsNotInDumps(): void
     {
         $client = $this->loggedInClient([]);
 
-        $this->assertGreaterThanOrEqual(0.0, $client->getLastDuration());
-        $this->assertLessThan(5.0, $client->getLastDuration());
+        ob_start();
+        var_dump($client);
+        $dump = (string) ob_get_clean();
+
+        self::assertStringNotContainsString(self::TOKEN, $dump);
+        self::assertStringContainsString('loggedIn', $dump);
+    }
+
+    public function testInvalidConfigLeavesConfigUnchanged(): void
+    {
+        $client = new Client();
+
+        try {
+            $client->setConfig(['timeout' => 30, 'user_agent' => 5]);
+            self::fail('Exception expected');
+        } catch (BuxferApiException) {
+            self::assertSame(10, $client->getConfig()['timeout']);
+        }
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     */
+    public static function invalidTimeoutProvider(): array
+    {
+        return [
+            'zero' => [0],
+            'negative' => [-1],
+            'not a number' => [NAN],
+            'infinite' => [INF],
+            'string' => ['10'],
+        ];
+    }
+
+    #[DataProvider('invalidTimeoutProvider')]
+    public function testInvalidTimeoutIsRejected(mixed $timeout): void
+    {
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('"timeout" must be a positive number');
+
+        new Client(['timeout' => $timeout]);
+    }
+
+    public function testListAllTransactionsRejectsRepeatedPage(): void
+    {
+        $response = $this->json((string) json_encode(['response' => ['transactions' => array_fill(0, Client::PAGE_SIZE, ['id' => 'x'])]]));
+        $client = $this->loggedInClient([$response, $response]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('same page of transactions twice');
+        $client->listAllTransactions();
+    }
+
+    public function testListAllTransactionsStopsAtMaxPages(): void
+    {
+        $limited = new class extends Client {
+            public const int MAX_PAGES = 2;
+        };
+        $responses = [$this->json('{"response":{"token":"t"}}')];
+
+        foreach (['a', 'b', 'c'] as $id) {
+            $responses[] = $this->json((string) json_encode(['response' => ['transactions' => array_fill(0, Client::PAGE_SIZE, ['id' => $id])]]));
+        }
+
+        $limited->setConfig(['handler' => HandlerStack::create(new MockHandler($responses))]);
+        $limited->login('testlogin', 'testpass');
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('More than 2 pages');
+        $limited->listAllTransactions();
+    }
+
+    public function testUploadStatementRequiresAccountAndStatement(): void
+    {
+        $client = $this->loggedInClient([]);
+
+        try {
+            $client->uploadStatement(['accountId' => '1000', 'statement' => '']);
+            self::fail('Exception expected');
+        } catch (BuxferApiException $exception) {
+            self::assertStringContainsString('"statement"', $exception->getMessage());
+        }
+
+        self::assertCount(1, $this->requests, 'only the login was sent');
+    }
+
+    public function testEditTransactionRequiresId(): void
+    {
+        $client = $this->loggedInClient([]);
+
+        $this->expectException(BuxferApiException::class);
+        $this->expectExceptionMessage('"id"');
+        $client->editTransaction(['amount' => '5']);
+    }
+
+    public function testDeleteTransactionRequiresId(): void
+    {
+        $client = $this->loggedInClient([]);
+
+        $this->expectException(BuxferApiException::class);
+        $client->deleteTransaction('');
     }
 }
