@@ -5,39 +5,39 @@ declare(strict_types=1);
 namespace BuxferApi;
 
 use GuzzleHttp\Client as HttpClient;
+use GuzzleHttp\Exception\GuzzleException;
 
+/**
+ * @phpstan-type FormParams array<string, scalar|array<mixed>|null>
+ */
 class Client
 {
-    /*
-     * Buxfer URL
-     */
     public const BUXFER_URL = 'https://www.buxfer.com/api/';
 
-    /*
-     * Library version
+    /**
+     * Update this when tagging a release; it is part of the default User-Agent.
      */
-    public const VERSION = '1.0.0';
+    public const VERSION = '2.0.0';
 
-    /*
-     * Available HTTP methods
-     */
     public const METHOD_GET = 'GET';
     public const METHOD_POST = 'POST';
 
     /**
-     * Configuration
-     *
-     * @var array<string, mixed>
+     * Number of transactions Buxfer returns per page
      */
-    protected array $config = [
-        'user_agent' => 'PHP BuxferApi ' . self::VERSION,
-        'timeout' => 10,
-        'handler' => null,
-    ];
+    public const PAGE_SIZE = 100;
+
+    protected string $userAgent = 'PHP BuxferApi ' . self::VERSION;
+
+    protected float|int $timeout = 10;
 
     /**
-     * Http client
+     * Guzzle handler, e.g. a HandlerStack
+     *
+     * @var callable|null
      */
+    protected $handler = null;
+
     protected HttpClient $httpClient;
 
     /**
@@ -45,53 +45,62 @@ class Client
      */
     protected string $token = '';
 
-    /**
-     * Last duration
-     */
     protected float $lastDuration = 0;
 
     /**
-     * Constructor
-     *
-     * @param array<string, mixed> $config     Configuration array
-     * @param HttpClient|null      $httpClient Http client
+     * True when the caller supplied the HTTP client, so setConfig() must not replace it
+     */
+    private readonly bool $customHttpClient;
+
+    /**
+     * @param array<string, mixed> $config     Configuration: user_agent (string), timeout (int|float), handler (callable)
+     * @param HttpClient|null      $httpClient Http client, used instead of building one from the configuration
+     * @throws Exception
      */
     public function __construct(array $config = [], ?HttpClient $httpClient = null)
     {
-        $this->setConfig($config);
+        $this->applyConfig($config);
 
-        // initialize http client
-        $this->httpClient = $httpClient ?? new HttpClient($this->config);
+        $this->customHttpClient = $httpClient !== null;
+        $this->httpClient = $httpClient ?? $this->buildHttpClient();
     }
 
     /**
-     * Set configuration
+     * Merge configuration; the HTTP client is rebuilt unless one was injected in the constructor
      *
-     * @param array<string, mixed> $config Configuration array
+     * @param array<string, mixed> $config Configuration: user_agent (string), timeout (int|float), handler (callable)
+     * @throws Exception
      */
     public function setConfig(array $config = []): void
     {
-        $this->config = array_merge($this->config, $config);
+        $this->applyConfig($config);
+
+        if (!$this->customHttpClient) {
+            $this->httpClient = $this->buildHttpClient();
+        }
     }
 
     /**
-     * Get configuration
-     *
-     * @return array<string, mixed>
+     * @return array{user_agent: string, timeout: float|int, handler: callable|null}
      */
     public function getConfig(): array
     {
-        return $this->config;
+        return [
+            'user_agent' => $this->userAgent,
+            'timeout' => $this->timeout,
+            'handler' => $this->handler,
+        ];
     }
 
     /**
      * Buxfer API login
      *
-     * @param string $username Buxfer username
+     * @param string $username Buxfer username (email)
      * @param string $password Buxfer password
+     * @return string The token, also used for all following requests
      * @throws Exception
      */
-    public function login(string $username, string $password): void
+    public function login(string $username, string $password): string
     {
         if ($username === '') {
             throw new Exception('Empty Buxfer username provided');
@@ -101,20 +110,25 @@ class Client
             throw new Exception('Empty Buxfer password provided');
         }
 
-        $url = self::BUXFER_URL . 'login?userid=' . urlencode($username) . '&password=' . urlencode($password);
-        $response = $this->restRequest($url);
+        // Buxfer only reads credentials from POST parameters, which also keeps them out of the URL
+        $response = $this->restRequest(
+            self::BUXFER_URL . 'login',
+            self::METHOD_POST,
+            ['email' => $username, 'password' => $password]
+        );
 
-        if (!isset($response['token']) || !is_string($response['token'])) {
+        if (!isset($response['token']) || !is_string($response['token']) || $response['token'] === '') {
             throw new Exception('Token not received from Buxfer login');
         }
 
         $this->token = $response['token'];
+
+        return $this->token;
     }
 
     /**
-     * List accounts
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listAccounts(): array
     {
@@ -122,9 +136,8 @@ class Client
     }
 
     /**
-     * List loans
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listLoans(): array
     {
@@ -132,9 +145,8 @@ class Client
     }
 
     /**
-     * List tags
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listTags(): array
     {
@@ -142,9 +154,8 @@ class Client
     }
 
     /**
-     * List budgets
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listBudgets(): array
     {
@@ -152,9 +163,8 @@ class Client
     }
 
     /**
-     * List reminders
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listReminders(): array
     {
@@ -162,9 +172,8 @@ class Client
     }
 
     /**
-     * List groups
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listGroups(): array
     {
@@ -172,9 +181,8 @@ class Client
     }
 
     /**
-     * List contacts
-     *
      * @return array<mixed>
+     * @throws Exception
      */
     public function listContacts(): array
     {
@@ -182,81 +190,184 @@ class Client
     }
 
     /**
-     * Upload statement
+     * Upload a bank or credit card statement
      *
-     * @param array<string, mixed> $params Parameters for upload statement
+     * @param FormParams $params accountId, statement (text) and optionally dateFormat (MM/DD/YYYY or DD/MM/YYYY)
+     * @return array<mixed> Response with status, uploaded and balance
+     * @throws Exception
      */
-    public function uploadStatement(array $params = []): void
+    public function uploadStatement(array $params): array
     {
-        $url = self::BUXFER_URL . 'transactions?token=' . urlencode($this->token);
-
-        $this->restRequest($url, self::METHOD_POST, $params);
+        return $this->restRequest($this->authenticatedUrl('upload_statement'), self::METHOD_POST, $params);
     }
 
     /**
-     * List transactions
+     * List one page (at most PAGE_SIZE) of transactions
      *
-     * @param array<string, scalar> $filters Filters used for transaction listing
+     * @param array<string, scalar> $filters accountId|accountName, tagId|tagName, startDate and endDate, budgetId|budgetName,
+     *                                       contactId|contactName, groupId|groupName, status, page
      * @return array<mixed>
+     * @throws Exception
      */
     public function listTransactions(array $filters = []): array
     {
-        $url = self::BUXFER_URL . 'transactions?token=' . urlencode($this->token);
-
-        foreach ($filters as $filterName => $filterValue) {
-            $url .= '&' . urlencode($filterName) . '=' . urlencode((string) $filterValue);
-        }
-
-        return $this->extract($this->restRequest($url), 'transactions');
+        return $this->extract($this->fetchTransactions($filters), 'transactions');
     }
 
     /**
-     * Add transaction
+     * List all transactions matching the filters, following the pagination
      *
-     * @param array<string, mixed> $transaction Transaction data
+     * @param array<string, scalar> $filters Same filters as listTransactions(), except page
+     * @return array<mixed>
+     * @throws Exception
      */
-    public function addTransaction(array $transaction): void
+    public function listAllTransactions(array $filters = []): array
     {
-        $url = self::BUXFER_URL . 'add_transaction?token=' . urlencode($this->token);
+        unset($filters['page']);
 
-        $this->restRequest($url, self::METHOD_POST, $transaction);
+        $all = [];
+        $page = 1;
+
+        do {
+            $response = $this->fetchTransactions($filters + ['page' => $page]);
+            $transactions = $this->extract($response, 'transactions');
+            array_push($all, ...$transactions);
+
+            $total = isset($response['numTransactions']) && is_int($response['numTransactions'])
+                ? $response['numTransactions']
+                : null;
+            $page++;
+        } while (count($transactions) >= self::PAGE_SIZE && ($total === null || count($all) < $total));
+
+        return $all;
     }
 
     /**
-     * Get last duration
+     * @param FormParams $transaction description, amount, accountId, date, type, tags, status, ...
+     * @return array<mixed> The created transaction
+     * @throws Exception
+     */
+    public function addTransaction(array $transaction): array
+    {
+        return $this->restRequest($this->authenticatedUrl('transaction_add'), self::METHOD_POST, $transaction);
+    }
+
+    /**
+     * @param FormParams $transaction id plus the fields to change, same fields as addTransaction()
+     * @return array<mixed> The updated transaction
+     * @throws Exception
+     */
+    public function editTransaction(array $transaction): array
+    {
+        return $this->restRequest($this->authenticatedUrl('transaction_edit'), self::METHOD_POST, $transaction);
+    }
+
+    /**
+     * @param string $id Transaction id
+     * @throws Exception
+     */
+    public function deleteTransaction(string $id): void
+    {
+        $this->restRequest($this->authenticatedUrl('transaction_delete'), self::METHOD_POST, ['id' => $id]);
+    }
+
+    /**
+     * Duration of the last request in seconds
      */
     public function getLastDuration(): float
     {
         return $this->lastDuration;
     }
 
-    /**
-     * Get token
-     */
     public function getToken(): string
     {
         return $this->token;
     }
 
     /**
+     * @param array<string, mixed> $config
+     * @throws Exception
+     */
+    protected function applyConfig(array $config): void
+    {
+        foreach ($config as $key => $value) {
+            switch ($key) {
+                case 'user_agent':
+                    if (!is_string($value)) {
+                        throw new Exception('Configuration "user_agent" must be a string');
+                    }
+                    $this->userAgent = $value;
+                    break;
+                case 'timeout':
+                    if (!is_int($value) && !is_float($value)) {
+                        throw new Exception('Configuration "timeout" must be a number');
+                    }
+                    $this->timeout = $value;
+                    break;
+                case 'handler':
+                    if ($value !== null && !is_callable($value)) {
+                        throw new Exception('Configuration "handler" must be callable');
+                    }
+                    $this->handler = $value;
+                    break;
+                default:
+                    throw new Exception('Unknown configuration "' . $key . '"');
+            }
+        }
+    }
+
+    protected function buildHttpClient(): HttpClient
+    {
+        $options = ['timeout' => $this->timeout];
+
+        if ($this->handler !== null) {
+            $options['handler'] = $this->handler;
+        }
+
+        return new HttpClient($options);
+    }
+
+    /**
+     * @param array<string, scalar> $filters
+     * @return array<mixed>
+     * @throws Exception
+     */
+    protected function fetchTransactions(array $filters): array
+    {
+        $url = $this->authenticatedUrl('transactions');
+
+        foreach ($filters as $filterName => $filterValue) {
+            $url .= '&' . urlencode($filterName) . '=' . urlencode((string) $filterValue);
+        }
+
+        return $this->restRequest($url);
+    }
+
+    /**
      * Fetch a list endpoint (accounts, loans, ...) and return the matching response key
      *
-     * @param string $name Endpoint and response key name
      * @return array<mixed>
      * @throws Exception
      */
     protected function listResource(string $name): array
     {
-        $url = self::BUXFER_URL . $name . '?token=' . urlencode($this->token);
-
-        return $this->extract($this->restRequest($url), $name);
+        return $this->extract($this->restRequest($this->authenticatedUrl($name)), $name);
     }
 
     /**
-     * Get a list from the decoded response
-     *
+     * @throws Exception When login() was not called yet
+     */
+    protected function authenticatedUrl(string $command): string
+    {
+        if ($this->token === '') {
+            throw new Exception('Not logged in, call login() first');
+        }
+
+        return self::BUXFER_URL . $command . '?token=' . urlencode($this->token);
+    }
+
+    /**
      * @param array<mixed> $response Decoded response
-     * @param string       $key      Response key
      * @return array<mixed>
      * @throws Exception
      */
@@ -270,63 +381,97 @@ class Client
     }
 
     /**
-     * Run REST request
-     *
-     * @param string               $url        URL to send request
-     * @param string               $method     Method used to send request
-     * @param array<string, mixed> $postParams Parameters used for POST
-     * @return array<mixed>
+     * @param FormParams $postParams Parameters used for POST
+     * @return array<mixed> The "response" part of the Buxfer response
      * @throws Exception
      */
     protected function restRequest(string $url, string $method = self::METHOD_GET, array $postParams = []): array
     {
-        $response = $this->httpRequest($url, $method, $postParams);
-        $responseDecoded = json_decode($response, true);
+        $body = $this->httpRequest($url, $method, $postParams);
+        $decoded = $this->decode($body);
 
-        if (!is_array($responseDecoded)) {
+        if ($decoded === null) {
+            throw new Exception('Invalid JSON received');
+        }
+
+        $error = $this->errorMessage($decoded);
+
+        if ($error !== null) {
+            throw new Exception('Error while running request: ' . $error);
+        }
+
+        if (!isset($decoded['response']) || !is_array($decoded['response'])) {
             throw new Exception('Invalid response received');
         }
 
-        if (isset($responseDecoded['error'])) {
-            $error = $responseDecoded['error'];
-            $message = is_array($error) && is_scalar($error['message'] ?? null)
-                ? (string) $error['message']
-                : 'unknown error';
-            throw new Exception('Error while running request: ' . $message);
-        }
-
-        if (!isset($responseDecoded['response']) || !is_array($responseDecoded['response'])) {
-            throw new Exception('Invalid response received');
-        }
-
-        return $responseDecoded['response'];
+        return $decoded['response'];
     }
 
     /**
-     * Run HTTP request
+     * Run an HTTP request. Guzzle exceptions are not passed on, because their messages contain the
+     * request URL and with it the token.
      *
-     * @param string               $url          URL to send request
-     * @param string               $method       Method used to send request
-     * @param array<string, mixed> $postParams   Parameters used for POST
-     * @param array<string, mixed> $extraOptions Extra options
+     * @param FormParams $postParams Parameters used for POST
+     * @return string Response body
+     * @throws Exception
      */
-    protected function httpRequest(string $url, string $method = self::METHOD_GET, array $postParams = [], array $extraOptions = []): string
+    protected function httpRequest(string $url, string $method = self::METHOD_GET, array $postParams = []): string
     {
         $startTime = microtime(true);
 
-        $extraOptions['headers'] = [
-            'User-Agent' => $this->config['user_agent'],
-        ];
-
-        if ($method === self::METHOD_POST) {
-            $extraOptions['form_params'] = $postParams;
+        try {
+            $response = $method === self::METHOD_POST
+                ? $this->httpClient->request($method, $url, [
+                    'headers' => ['User-Agent' => $this->userAgent],
+                    'http_errors' => false,
+                    'form_params' => $postParams,
+                ])
+                : $this->httpClient->request($method, $url, [
+                    'headers' => ['User-Agent' => $this->userAgent],
+                    'http_errors' => false,
+                ]);
+        } catch (GuzzleException $exception) {
+            throw new Exception('HTTP request failed (' . $exception::class . ')');
         }
 
-        $response = $this->httpClient->request($method, $url, $extraOptions);
-        $responseBody = (string) $response->getBody();
-
+        $body = (string) $response->getBody();
         $this->lastDuration = round(microtime(true) - $startTime, 4);
 
-        return $responseBody;
+        $status = $response->getStatusCode();
+
+        if ($status >= 400) {
+            $decoded = $this->decode($body);
+            $message = $decoded !== null ? $this->errorMessage($decoded) : null;
+
+            throw new Exception('Error while running request: ' . ($message ?? 'HTTP status ' . $status));
+        }
+
+        return $body;
+    }
+
+    /**
+     * @return array<mixed>|null
+     */
+    private function decode(string $body): ?array
+    {
+        $decoded = json_decode($body, true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * @param array<mixed> $decoded
+     */
+    private function errorMessage(array $decoded): ?string
+    {
+        if (!isset($decoded['error'])) {
+            return null;
+        }
+
+        $error = $decoded['error'];
+
+        return is_array($error) && isset($error['message']) && is_scalar($error['message'])
+            ? (string) $error['message']
+            : 'unknown error';
     }
 }

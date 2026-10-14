@@ -5,3 +5,5 @@
 /.phpcs-cache
 /.claude/*
 !/.claude/skills/
+/coverage.xml
+/junit.xml

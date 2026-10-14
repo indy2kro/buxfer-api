@@ -23,13 +23,14 @@ Single test: `vendor/bin/phpunit --filter testLoginSuccess tests/ClientTest.php`
 
 ## Architecture
 
-- `Client::restRequest()` wraps `httpRequest()`: JSON-decodes the body, throws `BuxferApi\Exception` if the payload has an `error` key or lacks a `response` key, and returns the inner `response` array. Every public action (`listAccounts`, `listTransactions`, `addTransaction`, …) builds a URL under `BUXFER_URL` and calls `restRequest`.
-- Auth is token-based: `login()` stores the token, and every other action appends `?token=` to the URL query string. Actions called before `login()` send an empty token (`getToken()` returns `''`).
-- GET actions put all params (including filters in `listTransactions`) in the query string; `addTransaction`/`uploadStatement` POST as `form_params`.
-- `httpRequest()` sets the User-Agent header from config and records `getLastDuration()`.
-- `$config` is passed directly to `new GuzzleHttp\Client(...)` in the constructor, so keys such as `timeout` and `handler` are Guzzle options. Note `setConfig()` after construction updates the array but does not rebuild the HTTP client.
-- Conventions: PSR12, short array syntax, `declare(strict_types=1)`, no underscore prefixes. Dependabot (composer and github-actions, weekly) keeps dependencies and pinned action SHAs current.
+- `Client::restRequest()` wraps `httpRequest()`: JSON-decodes the body, throws `BuxferApi\Exception` for an `error` payload, invalid JSON or a missing `response` key, and returns the inner `response` array. Every public action builds its URL with `authenticatedUrl()` (throws before `login()`) and calls `restRequest()`.
+- Auth is token-based: `login()` POSTs `email`/`password` (Buxfer ignores GET credentials) and stores the token; every other action appends `?token=` to the URL. The token is therefore in every URL.
+- `httpRequest()` never lets a Guzzle exception escape (their messages contain the URL and token) and does not chain it as previous; it sends `http_errors => false` and turns 4xx/5xx into `BuxferApi\Exception`.
+- Config is limited to `user_agent`, `timeout` and `handler` (validated in `applyConfig()`). `setConfig()` rebuilds the HTTP client unless one was injected into the constructor.
+- `listAllTransactions()` follows Buxfer's 100-per-page pagination using `numTransactions`.
+- Conventions: PSR12, short array syntax, `declare(strict_types=1)`, no underscore prefixes. Dependabot (composer and github-actions, weekly) keeps dependencies and pinned action SHAs current. Record user-visible changes in `CHANGELOG.md` and bump `Client::VERSION` when tagging.
+- Buxfer's command names are `transaction_add`, `transaction_edit`, `transaction_delete` and `upload_statement` (see https://www.buxfer.com/help/api).
 
 ## Testing
 
-`tests/ClientTest.php` never hits the network: it injects a Guzzle `MockHandler` via `HandlerStack::create($mock)` and `new Client(['handler' => $handlerStack])`, queuing canned JSON responses (`{"response":{...}}` or `{"error":{...}}`).
+`tests/ClientTest.php` never hits the network: it injects a Guzzle `MockHandler` through `HandlerStack::create($mock)` and `new Client(['handler' => $stack])`, queuing canned JSON responses (`{"response":{...}}` or `{"error":{...}}`) and recording requests with `Middleware::tap`. `loggedInClient()` queues the login response first.

@@ -11,3 +11,5 @@ phpunit.xml             export-ignore
 .gitignore              export-ignore
 .gitattributes          export-ignore
 /rector.php             export-ignore
+codecov.yml             export-ignore
+CHANGELOG.md            export-ignore

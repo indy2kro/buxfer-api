@@ -40,7 +40,7 @@ jobs:
         with:
           php-version: "${{ matrix.php-version }}"
           extensions: curl, json, mbstring
-          coverage: none
+          coverage: ${{ matrix.os == 'ubuntu-latest' && 'pcov' || 'none' }}
 
       - name: Get Composer cache directory
         id: composer-cache
@@ -78,7 +78,25 @@ jobs:
         run: vendor/bin/rector --dry-run
 
       - name: Tests
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: vendor/bin/phpunit --coverage-clover=coverage.xml --log-junit=junit.xml
+
+      - name: Tests
+        if: ${{ matrix.os != 'ubuntu-latest' }}
         run: vendor/bin/phpunit
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Send code coverage report to Codecov.io
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
 
   lowest:
     name: Lowest dependencies (PHP 8.3)
