@@ -1,4 +1,7 @@
 /vendor/
 /composer.lock
 /.phpunit.result.cache
-/.phplint-cache
+/.phpunit.cache
+/.phpcs-cache
+/.claude/*
+!/.claude/skills/

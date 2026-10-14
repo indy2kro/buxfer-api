@@ -1,0 +1,105 @@
+name: Tests
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  php-version:
+    name: PHP ${{ matrix.php-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      # Pull requests and pushes are a Linux smoke test on every supported PHP version. The full OS matrix
+      # (path separators, temp dirs) runs weekly and on demand.
+      matrix: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        && '{"os":["ubuntu-latest","windows-latest","macos-latest"],"php-version":["8.3","8.4","8.5"]}'
+        || '{"os":["ubuntu-latest"],"php-version":["8.3","8.4","8.5"]}') }}
+    env:
+      # Style and static analysis do not depend on the OS, so run them once per PHP version.
+      STATIC_CHECKS: ${{ matrix.os == 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: "${{ matrix.php-version }}"
+          extensions: curl, json, mbstring
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      # composer.lock is not committed, so cache the download cache instead of vendor/.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer update --no-progress
+
+      - name: Audit dependencies
+        if: ${{ env.STATIC_CHECKS == 'true' }}
+        run: composer audit
+
+      # Same commands as "composer quality", so local and CI results match.
+      - name: Code style
+        if: ${{ env.STATIC_CHECKS == 'true' }}
+        run: vendor/bin/phpcs
+
+      - name: PHPStan
+        if: ${{ env.STATIC_CHECKS == 'true' }}
+        run: php -d memory_limit=512M vendor/bin/phpstan analyse --no-progress
+
+      - name: Rector
+        if: ${{ env.STATIC_CHECKS == 'true' }}
+        run: vendor/bin/rector --dry-run
+
+      - name: Tests
+        run: vendor/bin/phpunit
+
+  lowest:
+    name: Lowest dependencies (PHP 8.3)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: "8.3"
+          extensions: curl, json, mbstring
+          coverage: none
+
+      - name: Install the lowest allowed dependencies
+        run: |
+          composer update --prefer-lowest --prefer-stable --no-progress
+          composer show --direct
+
+      - name: Tests
+        run: vendor/bin/phpunit
