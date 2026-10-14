@@ -1,5 +1,5 @@
 # BuxferApi
-Full Buxfer API library implementation in PHP.
+Full Buxfer API library implementation in PHP (8.3+).
 
 Uses Guzzle HTTP client with cURL for HTTPS requests to Buxfer. 
 Note: Using the API requires a valid Buxfer.com account.
@@ -49,11 +49,11 @@ $config = array(
     'buxfer_password' => 'testpassword',
     'buxfer_accountId' => '1000000',
 );
-$buxferApi = new \BuxferApi\Client($buxferConfig);
+$buxferApi = new \BuxferApi\Client();
 $buxferApi->login($config['buxfer_username'], $config['buxfer_password']);
 
 // list existing transactions
-$transactions = $buxferApi->listTransactions($config['buxfer_accountId']);
+$transactions = $buxferApi->listTransactions(['accountId' => $config['buxfer_accountId']]);
 
 // add new transaction
 $newTransaction = array(
@@ -64,5 +64,5 @@ $newTransaction = array(
     'description' => 'Test transaction',
     'tags' => 'mytag1,mytag2'
 );
-$buxferApi->addTransaction($transaction);
+$buxferApi->addTransaction($newTransaction);
 ```

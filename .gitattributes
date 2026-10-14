@@ -1,0 +1,13 @@
+# Keep LF everywhere so PHPCS passes on Windows checkouts too.
+* text=auto eol=lf
+
+.github/                export-ignore
+tests/                  export-ignore
+.claude/                export-ignore
+CLAUDE.md               export-ignore
+phpcs.xml               export-ignore
+phpstan.neon            export-ignore
+phpunit.xml             export-ignore
+.gitignore              export-ignore
+.gitattributes          export-ignore
+/rector.php             export-ignore

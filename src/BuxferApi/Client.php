@@ -1,16 +1,9 @@
 <?php
-/**
- * Buxfer API client
- *
- * @package BuxferApi
- * @author Indiana Jones <indy2kro@gmail.com>
- * @copyright 2021 BuxferApi
- * @license MIT https://opensource.org/licenses/MIT
- */
- 
+
+declare(strict_types=1);
+
 namespace BuxferApi;
 
-use BuxferApi\Exception;
 use GuzzleHttp\Client as HttpClient;
 
 class Client
@@ -18,321 +11,322 @@ class Client
     /*
      * Buxfer URL
      */
-    const BUXFER_URL = 'https://www.buxfer.com/api/';
-    
+    public const BUXFER_URL = 'https://www.buxfer.com/api/';
+
     /*
      * Library version
      */
-    const VERSION = '1.0.0';
-    
+    public const VERSION = '1.0.0';
+
     /*
      * Available HTTP methods
      */
-    const METHOD_GET = 'GET';
-    const METHOD_POST = 'POST';
-    
+    public const METHOD_GET = 'GET';
+    public const METHOD_POST = 'POST';
+
     /**
      * Configuration
-     * 
-     * @var array
+     *
+     * @var array<string, mixed>
      */
-    protected $_config = array(
+    protected array $config = [
         'user_agent' => 'PHP BuxferApi ' . self::VERSION,
         'timeout' => 10,
         'handler' => null,
-    );
-    
+    ];
+
     /**
      * Http client
-     * 
-     * @var HttpClient 
      */
-    protected $_httpClient;
-    
+    protected HttpClient $httpClient;
+
     /**
      * Token used for requests
-     * 
-     * @var string
      */
-    protected $_token;
-    
+    protected string $token = '';
+
     /**
      * Last duration
-     * 
-     * @var float
      */
-    protected $_lastDuration = 0;
-    
+    protected float $lastDuration = 0;
+
     /**
      * Constructor
-     * 
-     * @param array      $config     Configuration array
-     * @param HttpClient $httpClient Http client
+     *
+     * @param array<string, mixed> $config     Configuration array
+     * @param HttpClient|null      $httpClient Http client
      */
-    public function __construct(Array $config = array(), HttpClient $httpClient = null)
+    public function __construct(array $config = [], ?HttpClient $httpClient = null)
     {
         $this->setConfig($config);
-        
+
         // initialize http client
-        $this->_httpClient = !is_null($httpClient) ? $httpClient : new HttpClient($this->_config);
+        $this->httpClient = $httpClient ?? new HttpClient($this->config);
     }
-    
+
     /**
      * Set configuration
-     * 
-     * @param array $config Configuration array
-     * @return void
+     *
+     * @param array<string, mixed> $config Configuration array
      */
-    public function setConfig(Array $config = array())
+    public function setConfig(array $config = []): void
     {
-        $this->_config = array_merge($this->_config, $config);
+        $this->config = array_merge($this->config, $config);
     }
-    
+
     /**
      * Get configuration
-     * 
-     * @return array
+     *
+     * @return array<string, mixed>
      */
-    public function getConfig()
+    public function getConfig(): array
     {
-        return $this->_config;
+        return $this->config;
     }
-    
+
     /**
      * Buxfer API login
-     * 
+     *
      * @param string $username Buxfer username
      * @param string $password Buxfer password
      * @throws Exception
-     * @return void
      */
-    public function login($username, $password)
+    public function login(string $username, string $password): void
     {
-        if (empty($username)) {
+        if ($username === '') {
             throw new Exception('Empty Buxfer username provided');
         }
-        
-        if (empty($password)) {
+
+        if ($password === '') {
             throw new Exception('Empty Buxfer password provided');
         }
-        
+
         $url = self::BUXFER_URL . 'login?userid=' . urlencode($username) . '&password=' . urlencode($password);
-        $response = $this->_restRequest($url);
-        
-        if (!isset($response['token'])) {
+        $response = $this->restRequest($url);
+
+        if (!isset($response['token']) || !is_string($response['token'])) {
             throw new Exception('Token not received from Buxfer login');
         }
-        
-        $this->_token = $response['token'];
+
+        $this->token = $response['token'];
     }
-    
+
     /**
      * List accounts
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listAccounts()
+    public function listAccounts(): array
     {
-        $url = self::BUXFER_URL . 'accounts?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['accounts'];
+        return $this->listResource('accounts');
     }
-    
+
     /**
      * List loans
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listLoans()
+    public function listLoans(): array
     {
-        $url = self::BUXFER_URL . 'loans?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['loans'];
+        return $this->listResource('loans');
     }
-    
+
     /**
      * List tags
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listTags()
+    public function listTags(): array
     {
-        $url = self::BUXFER_URL . 'tags?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['tags'];
+        return $this->listResource('tags');
     }
-    
+
     /**
      * List budgets
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listBudgets()
+    public function listBudgets(): array
     {
-        $url = self::BUXFER_URL . 'budgets?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['budgets'];
+        return $this->listResource('budgets');
     }
-    
+
     /**
      * List reminders
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listReminders()
+    public function listReminders(): array
     {
-        $url = self::BUXFER_URL . 'reminders?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['reminders'];
+        return $this->listResource('reminders');
     }
-    
+
     /**
      * List groups
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listGroups()
+    public function listGroups(): array
     {
-        $url = self::BUXFER_URL . 'groups?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['groups'];
+        return $this->listResource('groups');
     }
-    
+
     /**
      * List contacts
-     * 
-     * @return array
+     *
+     * @return array<mixed>
      */
-    public function listContacts()
+    public function listContacts(): array
     {
-        $url = self::BUXFER_URL . 'contacts?token=' . urlencode($this->_token);
-        $response = $this->_restRequest($url);
-        return $response['contacts'];
+        return $this->listResource('contacts');
     }
-    
+
     /**
      * Upload statement
-     * 
-     * @param array $params Parameters for upload statement
-     * @return void
+     *
+     * @param array<string, mixed> $params Parameters for upload statement
      */
-    public function uploadStatement(Array $params = array())
+    public function uploadStatement(array $params = []): void
     {
-        $url = self::BUXFER_URL . 'transactions?token=' . urlencode($this->_token);
-        
-        $this->_restRequest($url, self::METHOD_POST, $params);
+        $url = self::BUXFER_URL . 'transactions?token=' . urlencode($this->token);
+
+        $this->restRequest($url, self::METHOD_POST, $params);
     }
-    
+
     /**
      * List transactions
-     * 
-     * @param array $filters Filters used for transaction listing
-     * @return array
+     *
+     * @param array<string, scalar> $filters Filters used for transaction listing
+     * @return array<mixed>
      */
-    public function listTransactions(Array $filters = array())
+    public function listTransactions(array $filters = []): array
     {
-        $url = self::BUXFER_URL . 'transactions?token=' . urlencode($this->_token);
-        
+        $url = self::BUXFER_URL . 'transactions?token=' . urlencode($this->token);
+
         foreach ($filters as $filterName => $filterValue) {
-            $url .= '&' . $filterName . '=' . urlencode($filterValue);
+            $url .= '&' . urlencode($filterName) . '=' . urlencode((string) $filterValue);
         }
-        
-        $response = $this->_restRequest($url);
-        
-        return $response['transactions'];
+
+        return $this->extract($this->restRequest($url), 'transactions');
     }
-    
+
     /**
      * Add transaction
-     * 
-     * @param array $transaction Transaction data
-     * @return void
+     *
+     * @param array<string, mixed> $transaction Transaction data
      */
-    public function addTransaction(Array $transaction)
+    public function addTransaction(array $transaction): void
     {
-        $url = self::BUXFER_URL . 'add_transaction?token=' . urlencode($this->_token);
-        
-        $this->_restRequest($url, self::METHOD_POST, $transaction);
+        $url = self::BUXFER_URL . 'add_transaction?token=' . urlencode($this->token);
+
+        $this->restRequest($url, self::METHOD_POST, $transaction);
     }
-    
+
     /**
      * Get last duration
-     * 
-     * @return float
      */
-    public function getLastDuration()
+    public function getLastDuration(): float
     {
-        return $this->_lastDuration;
+        return $this->lastDuration;
     }
-    
+
     /**
-     * Get token after login
-     * 
-     * @return string
+     * Get token
      */
-    public function getToken()
+    public function getToken(): string
     {
-        return $this->_token;
+        return $this->token;
     }
-    
+
+    /**
+     * Fetch a list endpoint (accounts, loans, ...) and return the matching response key
+     *
+     * @param string $name Endpoint and response key name
+     * @return array<mixed>
+     * @throws Exception
+     */
+    protected function listResource(string $name): array
+    {
+        $url = self::BUXFER_URL . $name . '?token=' . urlencode($this->token);
+
+        return $this->extract($this->restRequest($url), $name);
+    }
+
+    /**
+     * Get a list from the decoded response
+     *
+     * @param array<mixed> $response Decoded response
+     * @param string       $key      Response key
+     * @return array<mixed>
+     * @throws Exception
+     */
+    protected function extract(array $response, string $key): array
+    {
+        if (!isset($response[$key]) || !is_array($response[$key])) {
+            throw new Exception('Missing "' . $key . '" in response');
+        }
+
+        return $response[$key];
+    }
+
     /**
      * Run REST request
-     * 
-     * @param string $url        URL to send request
-     * @param string $method     Method used to send request
-     * @param array  $postParams Parameters used for POST
+     *
+     * @param string               $url        URL to send request
+     * @param string               $method     Method used to send request
+     * @param array<string, mixed> $postParams Parameters used for POST
+     * @return array<mixed>
      * @throws Exception
-     * @return array
      */
-    protected function _restRequest($url, $method = self::METHOD_GET, Array $postParams = array())
+    protected function restRequest(string $url, string $method = self::METHOD_GET, array $postParams = []): array
     {
-        $response = $this->_httpRequest($url, $method, $postParams);
+        $response = $this->httpRequest($url, $method, $postParams);
         $responseDecoded = json_decode($response, true);
-        
-        if (isset($responseDecoded['error'])) {
-            throw new Exception('Error while running request: ' . $responseDecoded['error']['message']);
-        }
-        
-        if (!isset($responseDecoded['response'])) {
+
+        if (!is_array($responseDecoded)) {
             throw new Exception('Invalid response received');
         }
-        
+
+        if (isset($responseDecoded['error'])) {
+            $error = $responseDecoded['error'];
+            $message = is_array($error) && is_scalar($error['message'] ?? null)
+                ? (string) $error['message']
+                : 'unknown error';
+            throw new Exception('Error while running request: ' . $message);
+        }
+
+        if (!isset($responseDecoded['response']) || !is_array($responseDecoded['response'])) {
+            throw new Exception('Invalid response received');
+        }
+
         return $responseDecoded['response'];
     }
-    
+
     /**
      * Run HTTP request
-     * 
-     * @param string $url          URL to send request
-     * @param string $method       Method used to send request
-     * @param array  $postParams   Parameters used for POST
-     * @param array  $extraOptions Extra options
-     * @throws Exception
-     * @return string
+     *
+     * @param string               $url          URL to send request
+     * @param string               $method       Method used to send request
+     * @param array<string, mixed> $postParams   Parameters used for POST
+     * @param array<string, mixed> $extraOptions Extra options
      */
-    protected function _httpRequest($url, $method = self::METHOD_GET, Array $postParams = array(), Array $extraOptions = array())
+    protected function httpRequest(string $url, string $method = self::METHOD_GET, array $postParams = [], array $extraOptions = []): string
     {
         $startTime = microtime(true);
-        
-        if (!isset($extraOptions['headers'])) {
-            $extraOptions['headers'] = array();
-        }
-        
-        $extraOptions['headers']['User-Agent'] = $this->_config['user_agent'];
-        
-        if ($method == self::METHOD_POST) {
+
+        $extraOptions['headers'] = [
+            'User-Agent' => $this->config['user_agent'],
+        ];
+
+        if ($method === self::METHOD_POST) {
             $extraOptions['form_params'] = $postParams;
         }
-        
-        $response = $this->_httpClient->request($method, $url, $extraOptions);
-        $responseBody = (string)$response->getBody();
-        
-        $endTime = microtime(true);
-        
-        $this->_lastDuration = round($endTime - $startTime, 4);
-        
+
+        $response = $this->httpClient->request($method, $url, $extraOptions);
+        $responseBody = (string) $response->getBody();
+
+        $this->lastDuration = round(microtime(true) - $startTime, 4);
+
         return $responseBody;
     }
 }
-
-/* EOF */
